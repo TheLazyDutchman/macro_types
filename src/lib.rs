@@ -1,10 +1,13 @@
-use name::Name;
+use name::{Name, TyRef};
 use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
+use stmt::{Constructor, Expr};
 use syn::{Data, DeriveInput};
 
-mod name;
+pub mod name;
+pub mod stmt;
 
+#[derive(Debug, Clone)]
 pub struct Struct {
 	pub name: Name,
 	pub fields: Vec<Field>,
@@ -18,19 +21,30 @@ impl Struct {
 		}
 	}
 
-	pub fn field(&mut self, name: Option<impl Into<Name>>, ty: TokenStream) {
+	pub fn field(&mut self, name: Option<impl Into<Name>>, ty: impl Into<TyRef>) {
 		self.fields
 			.push(Field::new(name, ty))
+	}
+
+	pub fn impl_block(&self) -> ImplBlock {
+		ImplBlock::new(self.name.clone())
+	}
+
+	pub fn constructor(&self) -> Constructor {
+		Constructor::new(self.name.clone())
 	}
 
 	pub fn method(
 		&self,
 		name: impl Into<Name>,
 		kind: FunctionKind,
-		ret_ty: Option<TokenStream>,
-		block: TokenStream,
-	) -> Method {
-		Method::new(self.name.clone(), name, kind, ret_ty, block)
+		args: Vec<Arg>,
+		ret_ty: Option<TyRef>,
+		block: Vec<Expr>,
+	) -> ImplBlock {
+		let mut impl_block = self.impl_block();
+		impl_block.function(name, kind, args, ret_ty, block);
+		impl_block
 	}
 }
 
@@ -66,16 +80,17 @@ impl TryFrom<DeriveInput> for Struct {
 	}
 }
 
+#[derive(Debug, Clone)]
 pub struct Field {
 	pub name: Option<Name>,
-	pub ty: TokenStream,
+	pub ty: TyRef,
 }
 
 impl Field {
-	pub fn new(name: Option<impl Into<Name>>, ty: TokenStream) -> Field {
+	pub fn new(name: Option<impl Into<Name>>, ty: impl Into<TyRef>) -> Field {
 		Self {
 			name: name.map(|x| x.into()),
-			ty,
+			ty: ty.into(),
 		}
 	}
 }
@@ -92,61 +107,70 @@ impl ToTokens for Field {
 
 impl From<syn::Field> for Field {
 	fn from(value: syn::Field) -> Self {
-		Self::new(value.ident, value.ty.into_token_stream())
+		Self::new(value.ident, value.ty)
 	}
 }
 
-pub struct Method {
-	// TODO: This should be a typeref
-	pub owner: Name,
-	pub function: Function,
+pub struct ImplBlock {
+	tyref: TyRef,
+	functions: Vec<Function>,
 }
 
-impl Method {
-	pub fn new(
-		owner: impl Into<Name>,
-		name: impl Into<Name>,
-		kind: FunctionKind,
-		ret_ty: Option<TokenStream>,
-		block: TokenStream,
-	) -> Self {
+impl ImplBlock {
+	pub fn new(tyref: impl Into<TyRef>) -> Self {
 		Self {
-			owner: owner.into(),
-			function: Function::new(name, kind, ret_ty, block),
+			tyref: tyref.into(),
+			functions: Vec::new(),
 		}
 	}
-}
 
-impl ToTokens for Method {
-	fn to_tokens(&self, tokens: &mut TokenStream) {
-		let name = &self.owner;
-		let function = &self.function;
-
-		tokens.extend(quote! {
-			impl #name {
-				#function
-			}
-		});
+	pub fn function(
+		&mut self,
+		name: impl Into<Name>,
+		kind: FunctionKind,
+		args: Vec<Arg>,
+		ret_ty: Option<TyRef>,
+		block: Vec<Expr>,
+	) {
+		self.functions
+			.push(Function::new(name, kind, args, ret_ty, block))
 	}
 }
 
+impl ToTokens for ImplBlock {
+	fn to_tokens(&self, tokens: &mut TokenStream) {
+		let tyref = &self.tyref;
+		let functions = &self.functions;
+
+		tokens.extend(quote! {
+			impl #tyref {
+				#(#functions)*
+			}
+		})
+	}
+}
+
+#[derive(Debug, Clone)]
 pub struct Function {
 	pub name: Name,
 	pub kind: FunctionKind,
-	pub ret_ty: Option<TokenStream>,
-	pub block: TokenStream,
+	pub args: Vec<Arg>,
+	pub ret_ty: Option<TyRef>,
+	pub block: Vec<Expr>,
 }
 
 impl Function {
 	pub fn new(
 		name: impl Into<Name>,
 		kind: FunctionKind,
-		ret_ty: Option<TokenStream>,
-		block: TokenStream,
+		args: Vec<Arg>,
+		ret_ty: Option<TyRef>,
+		block: Vec<Expr>,
 	) -> Function {
 		Self {
 			name: name.into(),
 			kind,
+			args,
 			ret_ty,
 			block,
 		}
@@ -163,19 +187,65 @@ impl ToTokens for Function {
 		let block = &self.block;
 
 		let kind = match &self.kind {
-			FunctionKind::Static => quote!(),
-			FunctionKind::Ref => quote!(&self,),
+			FunctionKind::Static => None,
+			FunctionKind::Owned => Some(quote!(self)),
+			FunctionKind::Ref => Some(quote! {&self}),
+			FunctionKind::Mut => Some(quote! {&mut self}),
 		};
 
+		let mut args = self
+			.args
+			.iter()
+			.map(|x| quote! {#x})
+			.collect::<Vec<_>>();
+
+		// If we do not return anything, add a semicolon after the last stmt
+		let semi = if ret.is_none() { Some(quote!(;)) } else { None };
+
+		if let Some(kind) = kind {
+			args.insert(0, kind);
+		}
+
 		tokens.extend(quote! {
-			pub fn #name(#kind) #ret {
-				#block
+			pub fn #name(#(#args),*) #ret {
+				#(#block);*
+
+				#semi
 			}
 		})
 	}
 }
 
+#[derive(Debug, Clone)]
 pub enum FunctionKind {
 	Static,
+	Owned,
 	Ref,
+	Mut,
+}
+
+#[derive(Debug, Clone)]
+pub struct Arg {
+	name: Name,
+	ty: TyRef,
+}
+
+impl TryFrom<Field> for Arg {
+	type Error = ();
+
+	fn try_from(value: Field) -> Result<Self, Self::Error> {
+		let name = value.name.ok_or(())?;
+		let ty = value.ty;
+
+		Ok(Self { name, ty })
+	}
+}
+
+impl ToTokens for Arg {
+	fn to_tokens(&self, tokens: &mut TokenStream) {
+		let name = &self.name;
+		let ty = &self.ty;
+
+		tokens.extend(quote! {#name: #ty});
+	}
 }
