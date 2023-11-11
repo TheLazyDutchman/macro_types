@@ -7,6 +7,7 @@ use crate::name::{Name, Path, TyRef};
 pub enum Expr {
 	Constructor(Constructor),
 	Call(Path, Vec<Expr>),
+	CallMethod(Box<Expr>, Vec<Expr>),
 	Unwrap(Box<Expr>),
 	Field(Box<Expr>, Name),
 	Variable(Name),
@@ -24,6 +25,7 @@ impl ToTokens for Expr {
 		match self {
 			Self::Constructor(value) => value.to_tokens(tokens),
 			Self::Call(path, args) => tokens.extend(quote! { #path (#(#args),*) }),
+			Self::CallMethod(method, args) => tokens.extend(quote! { #method (#(#args),*) }),
 			Self::Unwrap(value) => tokens.extend(quote! { #value? }),
 			Self::Field(value, name) => tokens.extend(quote! { #value.#name }),
 			Self::Variable(name) => name.to_tokens(tokens),

@@ -1,13 +1,17 @@
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::{quote, ToTokens, TokenStreamExt};
-use syn::{GenericArgument, PathArguments};
+use syn::{GenericArgument, LitStr, PathArguments};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Name(Ident);
 
 impl Name {
 	pub fn map<S: AsRef<str>, F: FnOnce(String) -> S>(&self, func: F) -> Self {
 		Ident::new(func(self.0.to_string()).as_ref(), self.0.span()).into()
+	}
+
+	pub fn inner(&self) -> &Ident {
+		&self.0
 	}
 }
 
@@ -29,6 +33,12 @@ impl From<Ident> for Name {
 	}
 }
 
+impl From<LitStr> for Name {
+	fn from(value: LitStr) -> Self {
+		value.value().into()
+	}
+}
+
 impl From<syn::PathSegment> for Name {
 	fn from(value: syn::PathSegment) -> Self {
 		value.ident.into()
@@ -41,10 +51,10 @@ impl ToTokens for Name {
 	}
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Path {
-	segments: Vec<Name>,
-	generics: Vec<Generic>,
+	pub segments: Vec<Name>,
+	pub generics: Vec<Generic>,
 }
 
 impl ToTokens for Path {
@@ -120,7 +130,7 @@ where
 	}
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Generic {
 	TyRef(TyRef),
 }
@@ -153,9 +163,11 @@ impl From<syn::Type> for Generic {
 	}
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TyRef {
 	Path(Path),
+	Ref(Box<TyRef>),
+	RefMut(Box<TyRef>),
 }
 
 impl TyRef {
@@ -165,6 +177,50 @@ impl TyRef {
 				segments,
 				generics: vec![Generic::TyRef(self.clone())],
 			}),
+			Wrapping::Ref => Self::Ref(Box::new(self.clone())),
+			Wrapping::RefMut => Self::RefMut(Box::new(self.clone())),
+		}
+	}
+
+	pub fn is_wrapped(&self, wrapping: Wrapping) -> bool {
+		match wrapping {
+			Wrapping::Path(segments) => {
+				if let Self::Path(values) = self {
+					values.segments == segments
+				} else {
+					false
+				}
+			}
+			Wrapping::RefMut => self.is_ref_mut(),
+			Wrapping::Ref => self.is_ref(),
+		}
+	}
+
+	pub fn is_ref_mut(&self) -> bool {
+		matches!(self, Self::RefMut(_))
+	}
+
+	pub fn is_ref(&self) -> bool {
+		matches!(self, Self::Ref(_))
+	}
+
+	pub fn try_unwrap(&self, wrapping: Wrapping) -> Option<Self> {
+		if !self.is_wrapped(wrapping) {
+			return None;
+		}
+
+		match self {
+			Self::Path(value) => Some(
+				value
+					.generics
+					.first()
+					.unwrap()
+					.clone()
+					.try_into()
+					.unwrap(),
+			),
+			Self::RefMut(value) => Some(*value.clone()),
+			Self::Ref(value) => Some(*value.clone()),
 		}
 	}
 }
@@ -173,6 +229,8 @@ impl ToTokens for TyRef {
 	fn to_tokens(&self, tokens: &mut TokenStream) {
 		match self {
 			TyRef::Path(value) => value.to_tokens(tokens),
+			TyRef::Ref(value) => tokens.extend(quote!(&#value)),
+			TyRef::RefMut(value) => tokens.extend(quote!(&mut #value)),
 		}
 	}
 }
@@ -212,6 +270,18 @@ impl From<syn::Type> for TyRef {
 	}
 }
 
+impl TryFrom<Generic> for TyRef {
+	type Error = ();
+
+	fn try_from(value: Generic) -> Result<Self, Self::Error> {
+		match value {
+			Generic::TyRef(value) => Ok(value),
+		}
+	}
+}
+
 pub enum Wrapping {
 	Path(Vec<Name>),
+	Ref,
+	RefMut,
 }

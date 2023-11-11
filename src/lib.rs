@@ -1,9 +1,11 @@
+use attr::Attr;
 use name::{Name, TyRef};
 use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
 use stmt::{Constructor, Expr};
 use syn::{Data, DeriveInput};
 
+pub mod attr;
 pub mod name;
 pub mod stmt;
 
@@ -23,7 +25,7 @@ impl Struct {
 
 	pub fn field(&mut self, name: Option<impl Into<Name>>, ty: impl Into<TyRef>) {
 		self.fields
-			.push(Field::new(name, ty))
+			.push(Field::new(name, ty, Vec::new()))
 	}
 
 	pub fn impl_block(&self) -> ImplBlock {
@@ -84,13 +86,15 @@ impl TryFrom<DeriveInput> for Struct {
 pub struct Field {
 	pub name: Option<Name>,
 	pub ty: TyRef,
+	pub attrs: Vec<Attr>,
 }
 
 impl Field {
-	pub fn new(name: Option<impl Into<Name>>, ty: impl Into<TyRef>) -> Field {
+	pub fn new(name: Option<impl Into<Name>>, ty: impl Into<TyRef>, attrs: Vec<Attr>) -> Field {
 		Self {
 			name: name.map(|x| x.into()),
 			ty: ty.into(),
+			attrs,
 		}
 	}
 }
@@ -107,7 +111,15 @@ impl ToTokens for Field {
 
 impl From<syn::Field> for Field {
 	fn from(value: syn::Field) -> Self {
-		Self::new(value.ident, value.ty)
+		Self::new(
+			value.ident,
+			value.ty,
+			value
+				.attrs
+				.into_iter()
+				.map(Attr::from)
+				.collect(),
+		)
 	}
 }
 
@@ -189,8 +201,9 @@ impl ToTokens for Function {
 		let kind = match &self.kind {
 			FunctionKind::Static => None,
 			FunctionKind::Owned => Some(quote!(self)),
-			FunctionKind::Ref => Some(quote! {&self}),
-			FunctionKind::Mut => Some(quote! {&mut self}),
+			FunctionKind::MutOwned => Some(quote!(mut self)),
+			FunctionKind::Ref => Some(quote!(&self)),
+			FunctionKind::Mut => Some(quote!(&mut self)),
 		};
 
 		let mut args = self
@@ -220,6 +233,7 @@ impl ToTokens for Function {
 pub enum FunctionKind {
 	Static,
 	Owned,
+	MutOwned,
 	Ref,
 	Mut,
 }
@@ -230,14 +244,20 @@ pub struct Arg {
 	ty: TyRef,
 }
 
+impl Arg {
+	pub fn new(name: impl Into<Name>, ty: impl Into<TyRef>) -> Arg {
+		Self {
+			name: name.into(),
+			ty: ty.into(),
+		}
+	}
+}
+
 impl TryFrom<Field> for Arg {
 	type Error = ();
 
 	fn try_from(value: Field) -> Result<Self, Self::Error> {
-		let name = value.name.ok_or(())?;
-		let ty = value.ty;
-
-		Ok(Self { name, ty })
+		Ok(Self::new(value.name.ok_or(())?, value.ty))
 	}
 }
 
