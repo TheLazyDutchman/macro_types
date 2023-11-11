@@ -10,7 +10,7 @@ pub enum Expr {
 	CallMethod(Box<Expr>, Vec<Expr>),
 	Unwrap(Box<Expr>),
 	Field(Box<Expr>, Name),
-	Variable(Name),
+	Variable(Path),
 	Assign(Box<Expr>, Box<Expr>),
 }
 

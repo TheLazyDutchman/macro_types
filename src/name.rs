@@ -186,7 +186,11 @@ impl TyRef {
 		match wrapping {
 			Wrapping::Path(segments) => {
 				if let Self::Path(values) = self {
-					values.segments == segments
+					if segments.len() == 1 && values.segments.len() > 1 {
+						segments.last() == values.segments.last()
+					} else {
+						values.segments == segments
+					}
 				} else {
 					false
 				}
