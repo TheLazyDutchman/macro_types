@@ -2,6 +2,8 @@ use proc_macro2::{Ident, Span, TokenStream};
 use quote::{quote, ToTokens, TokenStreamExt};
 use syn::{GenericArgument, LitStr, PathArguments};
 
+use crate::tyref::TyRef;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Name(Ident);
 
@@ -163,119 +165,6 @@ impl From<syn::Type> for Generic {
 	}
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TyRef {
-	Path(Path),
-	Ref(Box<TyRef>),
-	RefMut(Box<TyRef>),
-}
-
-impl TyRef {
-	pub fn wrap(&self, wrapping: Wrapping) -> Self {
-		match wrapping {
-			Wrapping::Path(segments) => Self::Path(Path {
-				segments,
-				generics: vec![Generic::TyRef(self.clone())],
-			}),
-			Wrapping::Ref => Self::Ref(Box::new(self.clone())),
-			Wrapping::RefMut => Self::RefMut(Box::new(self.clone())),
-		}
-	}
-
-	pub fn is_wrapped(&self, wrapping: Wrapping) -> bool {
-		match wrapping {
-			Wrapping::Path(segments) => {
-				if let Self::Path(values) = self {
-					if segments.len() == 1 && values.segments.len() > 1 {
-						segments.last() == values.segments.last()
-					} else {
-						values.segments == segments
-					}
-				} else {
-					false
-				}
-			}
-			Wrapping::RefMut => self.is_ref_mut(),
-			Wrapping::Ref => self.is_ref(),
-		}
-	}
-
-	pub fn is_ref_mut(&self) -> bool {
-		matches!(self, Self::RefMut(_))
-	}
-
-	pub fn is_ref(&self) -> bool {
-		matches!(self, Self::Ref(_))
-	}
-
-	pub fn try_unwrap(&self, wrapping: Wrapping) -> Option<Self> {
-		if !self.is_wrapped(wrapping) {
-			return None;
-		}
-
-		match self {
-			Self::Path(value) => Some(
-				value
-					.generics
-					.first()
-					.unwrap()
-					.clone()
-					.try_into()
-					.unwrap(),
-			),
-			Self::RefMut(value) => Some(*value.clone()),
-			Self::Ref(value) => Some(*value.clone()),
-		}
-	}
-}
-
-impl ToTokens for TyRef {
-	fn to_tokens(&self, tokens: &mut TokenStream) {
-		match self {
-			TyRef::Path(value) => value.to_tokens(tokens),
-			TyRef::Ref(value) => tokens.extend(quote!(&#value)),
-			TyRef::RefMut(value) => tokens.extend(quote!(&mut #value)),
-		}
-	}
-}
-
-impl<T> From<T> for TyRef
-where
-	Path: From<T>,
-{
-	fn from(value: T) -> Self {
-		Self::Path(value.into())
-	}
-}
-
-impl From<syn::Type> for TyRef {
-	fn from(value: syn::Type) -> Self {
-		match value {
-			syn::Type::Array(_) => unimplemented!(),
-			syn::Type::BareFn(_) => unimplemented!(),
-			syn::Type::Group(_) => unimplemented!(),
-			syn::Type::ImplTrait(_) => unimplemented!(),
-			syn::Type::Infer(_) => unimplemented!(),
-			syn::Type::Macro(_) => unimplemented!(),
-			syn::Type::Never(_) => unimplemented!(),
-			syn::Type::Paren(_) => unimplemented!(),
-			syn::Type::Path(value) => Self::Path(value.into()),
-			syn::Type::Ptr(_) => unimplemented!(),
-			syn::Type::Reference(value) if value.mutability.is_none() => {
-				Self::Ref(Box::new((*value.elem).into()))
-			}
-			syn::Type::Reference(value) if value.mutability.is_some() => {
-				Self::RefMut(Box::new((*value.elem).into()))
-			}
-			syn::Type::Slice(_) => unimplemented!(),
-			syn::Type::TraitObject(_) => unimplemented!(),
-			syn::Type::Tuple(_) => unimplemented!(),
-			syn::Type::Verbatim(_) => unimplemented!(),
-			_ => unimplemented!(),
-		}
-	}
-}
-
 impl TryFrom<Generic> for TyRef {
 	type Error = ();
 
@@ -286,8 +175,8 @@ impl TryFrom<Generic> for TyRef {
 	}
 }
 
-pub enum Wrapping {
-	Path(Vec<Name>),
-	Ref,
-	RefMut,
+impl From<TyRef> for Generic {
+	fn from(value: TyRef) -> Self {
+		Self::TyRef(value)
+	}
 }
