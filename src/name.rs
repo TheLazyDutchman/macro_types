@@ -239,14 +239,11 @@ impl ToTokens for TyRef {
 	}
 }
 
-impl From<Path> for TyRef {
-	fn from(value: Path) -> Self {
-		Self::Path(value)
-	}
-}
-
-impl From<Name> for TyRef {
-	fn from(value: Name) -> Self {
+impl<T> From<T> for TyRef
+where
+	Path: From<T>,
+{
+	fn from(value: T) -> Self {
 		Self::Path(value.into())
 	}
 }
@@ -264,7 +261,12 @@ impl From<syn::Type> for TyRef {
 			syn::Type::Paren(_) => unimplemented!(),
 			syn::Type::Path(value) => Self::Path(value.into()),
 			syn::Type::Ptr(_) => unimplemented!(),
-			syn::Type::Reference(_) => unimplemented!(),
+			syn::Type::Reference(value) if value.mutability.is_none() => {
+				Self::Ref(Box::new((*value.elem).into()))
+			}
+			syn::Type::Reference(value) if value.mutability.is_some() => {
+				Self::RefMut(Box::new((*value.elem).into()))
+			}
 			syn::Type::Slice(_) => unimplemented!(),
 			syn::Type::TraitObject(_) => unimplemented!(),
 			syn::Type::Tuple(_) => unimplemented!(),

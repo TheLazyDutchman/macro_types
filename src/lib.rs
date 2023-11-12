@@ -1,13 +1,13 @@
 use attr::Attr;
+use expr::{Block, Constructor};
 use name::{Name, TyRef};
 use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
-use stmt::{Constructor, Expr};
 use syn::{Data, DeriveInput};
 
 pub mod attr;
+pub mod expr;
 pub mod name;
-pub mod stmt;
 
 #[derive(Debug, Clone)]
 pub struct Struct {
@@ -33,7 +33,7 @@ impl Struct {
 	}
 
 	pub fn constructor(&self) -> Constructor {
-		Constructor::new(self.name.clone())
+		Constructor::new(self.name.clone(), vec![])
 	}
 
 	pub fn method(
@@ -42,7 +42,7 @@ impl Struct {
 		kind: FunctionKind,
 		args: Vec<Arg>,
 		ret_ty: Option<TyRef>,
-		block: Vec<Expr>,
+		block: impl Into<Block>,
 	) -> ImplBlock {
 		let mut impl_block = self.impl_block();
 		impl_block.function(name, kind, args, ret_ty, block);
@@ -124,6 +124,7 @@ impl From<syn::Field> for Field {
 }
 
 pub struct ImplBlock {
+	for_trait: Option<TyRef>,
 	tyref: TyRef,
 	functions: Vec<Function>,
 }
@@ -131,6 +132,7 @@ pub struct ImplBlock {
 impl ImplBlock {
 	pub fn new(tyref: impl Into<TyRef>) -> Self {
 		Self {
+			for_trait: None,
 			tyref: tyref.into(),
 			functions: Vec::new(),
 		}
@@ -142,10 +144,19 @@ impl ImplBlock {
 		kind: FunctionKind,
 		args: Vec<Arg>,
 		ret_ty: Option<TyRef>,
-		block: Vec<Expr>,
+		block: impl Into<Block>,
 	) {
-		self.functions
-			.push(Function::new(name, kind, args, ret_ty, block))
+		let mut function = Function::new(name, kind, args, ret_ty, block);
+		if self.for_trait.is_some() {
+			function.is_pub = false;
+		}
+
+		self.functions.push(function);
+	}
+
+	pub fn for_trait(&mut self, for_trait: impl Into<TyRef>) -> &mut Self {
+		self.for_trait = Some(for_trait.into());
+		self
 	}
 }
 
@@ -153,9 +164,13 @@ impl ToTokens for ImplBlock {
 	fn to_tokens(&self, tokens: &mut TokenStream) {
 		let tyref = &self.tyref;
 		let functions = &self.functions;
+		let trait_ref = self
+			.for_trait
+			.as_ref()
+			.map(|x| quote!(#x for));
 
 		tokens.extend(quote! {
-			impl #tyref {
+			impl #trait_ref #tyref {
 				#(#functions)*
 			}
 		})
@@ -164,11 +179,12 @@ impl ToTokens for ImplBlock {
 
 #[derive(Debug, Clone)]
 pub struct Function {
+	pub is_pub: bool,
 	pub name: Name,
 	pub kind: FunctionKind,
 	pub args: Vec<Arg>,
 	pub ret_ty: Option<TyRef>,
-	pub block: Vec<Expr>,
+	pub block: Block,
 }
 
 impl Function {
@@ -177,14 +193,15 @@ impl Function {
 		kind: FunctionKind,
 		args: Vec<Arg>,
 		ret_ty: Option<TyRef>,
-		block: Vec<Expr>,
+		block: impl Into<Block>,
 	) -> Function {
 		Self {
+			is_pub: true,
 			name: name.into(),
 			kind,
 			args,
 			ret_ty,
-			block,
+			block: block.into(),
 		}
 	}
 }
@@ -219,9 +236,13 @@ impl ToTokens for Function {
 			args.insert(0, kind);
 		}
 
+		let is_pub = self
+			.is_pub
+			.then_some(quote!(pub));
+
 		tokens.extend(quote! {
-			pub fn #name(#(#args),*) #ret {
-				#(#block);*
+			#is_pub fn #name(#(#args),*) #ret {
+				#block
 
 				#semi
 			}
