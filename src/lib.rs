@@ -310,6 +310,22 @@ impl TryFrom<DeriveInput> for Struct {
 	}
 }
 
+impl From<syn::Variant> for Struct {
+	fn from(input: syn::Variant) -> Self {
+		let mut object = Struct::new(input.ident);
+
+		for attr in input.attrs {
+			object.attr(attr);
+		}
+
+		for field in input.fields {
+			object.field(field.ident, field.ty);
+		}
+
+		object
+	}
+}
+
 #[derive(Debug, Clone)]
 pub struct Field {
 	pub name: Option<Name>,
@@ -348,6 +364,152 @@ impl From<syn::Field> for Field {
 				.map(Attr::from)
 				.collect(),
 		)
+	}
+}
+
+#[derive(Debug, Clone)]
+pub struct Enum {
+	pub name: Name,
+	pub attrs: Vec<Attr>,
+	pub generics: Vec<Generic>,
+	// TODO: Deal with variants other than named variants
+	pub variants: Vec<Struct>,
+}
+
+impl Enum {
+	pub fn new(name: impl Into<Name>) -> Self {
+		Self {
+			name: name.into(),
+			attrs: Vec::new(),
+			generics: Vec::new(),
+			variants: Vec::new(),
+		}
+	}
+
+	pub fn ty_ref(&self) -> TyRef {
+		let mut path: name::Path = self.name.clone().into();
+		path.generics = self.generics.clone();
+		path.into()
+	}
+
+	pub fn attr(&mut self, attr: impl Into<Attr>) {
+		self.attrs.push(attr.into());
+	}
+
+	pub fn generic(&mut self, generic: impl Into<Generic>) {
+		self.generics
+			.push(generic.into());
+	}
+
+	pub fn variant(&mut self, variant: impl Into<Struct>) {
+		self.variants
+			.push(variant.into());
+	}
+
+	pub fn impl_block(&self) -> ImplBlock {
+		let generics = self
+			.generics
+			.iter()
+			.filter(|x| {
+				self.variants
+					.iter()
+					.any(|variant| {
+						variant
+							.fields
+							.iter()
+							.all(|field| field.ty.contains(x))
+					})
+			})
+			.cloned()
+			.chain(
+				self.generics
+					.iter()
+					.flat_map(|x| {
+						self.variants
+							.iter()
+							.flat_map(|variant| {
+								variant
+									.fields
+									.iter()
+									.flat_map(|field| field.ty.associated_type_of(x))
+							})
+					}),
+			);
+
+		ImplBlock::new(self.ty_ref(), self.generics.clone(), generics.collect())
+	}
+
+	pub fn constructor(&self) -> Constructor {
+		Constructor::new(self.ty_ref(), vec![])
+	}
+
+	pub fn method(
+		&self,
+		name: impl Into<Name>,
+		kind: FunctionKind,
+		args: Vec<Arg>,
+		ret_ty: Option<TyRef>,
+		block: impl Into<Block>,
+	) -> ImplBlock {
+		let mut impl_block = self.impl_block();
+		impl_block.function(name, kind, args, ret_ty, block);
+		impl_block
+	}
+}
+
+impl ToTokens for Enum {
+	fn to_tokens(&self, tokens: &mut TokenStream) {
+		let name = &self.name;
+
+		let variants = self.variants.iter().map(|x| {
+			let name = &x.name;
+			let fields = &x.fields;
+
+			quote! {
+				#name {
+					#(#fields),*
+				}
+			}
+		});
+
+		let generics = if self.generics.is_empty() {
+			None
+		} else {
+			let generics = &self.generics;
+			Some(quote!(<#(#generics),*>))
+		};
+
+		tokens.extend(quote! {
+			pub enum #name #generics {
+				#(#variants),*
+			}
+		})
+	}
+}
+
+impl TryFrom<DeriveInput> for Enum {
+	type Error = ();
+
+	fn try_from(input: DeriveInput) -> Result<Self, Self::Error> {
+		let mut object = Enum::new(input.ident);
+
+		let Data::Enum(value) = input.data else {
+			return Err(());
+		};
+
+		for attr in input.attrs {
+			object.attr(attr);
+		}
+
+		for generic in input.generics.params {
+			object.generic(generic);
+		}
+
+		for variant in value.variants {
+			object.variant(variant);
+		}
+
+		Ok(object)
 	}
 }
 
