@@ -12,7 +12,7 @@ repository = "https://github.com/TheLazyDutchman/macro_types"
 proc-macro = true
 
 [dependencies]
-macro_types = { path = "../", version = "0.2.0" }
+macro_types = { path = "../", version = "0.3.0" }
 proc-macro2 = "1.0.69"
 quote = "1.0.33"
 syn = { version = "2.0.39", features = ["extra-traits"] }
