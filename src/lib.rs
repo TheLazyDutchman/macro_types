@@ -519,6 +519,7 @@ pub struct ImplBlock {
 	tyref: TyRef,
 	where_bound: Vec<Generic>,
 	bound_overwrite: Option<String>,
+	types: Vec<AssociatedType>,
 	functions: Vec<Function>,
 }
 
@@ -530,8 +531,14 @@ impl ImplBlock {
 			tyref: tyref.into(),
 			where_bound,
 			bound_overwrite: None,
+			types: Vec::new(),
 			functions: Vec::new(),
 		}
+	}
+
+	pub fn associated_type(&mut self, name: impl Into<Name>, ty: impl Into<TyRef>) {
+		self.types
+			.push(AssociatedType::new(name, ty));
 	}
 
 	pub fn function(
@@ -564,6 +571,7 @@ impl ImplBlock {
 impl ToTokens for ImplBlock {
 	fn to_tokens(&self, tokens: &mut TokenStream) {
 		let tyref = &self.tyref.without_bounds();
+		let types = &self.types;
 		let functions = &self.functions;
 		let trait_ref = self
 			.for_trait
@@ -597,9 +605,35 @@ impl ToTokens for ImplBlock {
 
 		tokens.extend(quote! {
 			impl #generics #trait_ref #tyref #where_bound {
+				#(#types)*
 				#(#functions)*
 			}
 		})
+	}
+}
+
+pub struct AssociatedType {
+	pub name: Name,
+	pub ty: TyRef,
+}
+
+impl AssociatedType {
+	pub fn new(name: impl Into<Name>, ty: impl Into<TyRef>) -> Self {
+		Self {
+			name: name.into(),
+			ty: ty.into(),
+		}
+	}
+}
+
+impl ToTokens for AssociatedType {
+	fn to_tokens(&self, tokens: &mut TokenStream) {
+		let name = &self.name;
+		let ty_ref = &self.ty.without_bounds();
+
+		tokens.extend(quote! {
+			type #name = #ty_ref;
+		});
 	}
 }
 

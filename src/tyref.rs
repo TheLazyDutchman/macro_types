@@ -5,6 +5,7 @@ use crate::{
 
 crate::enum_definitions! {
 	pub enum TyRef {
+		Unit { } => { () },
 		Path { path: name::Path } => { #path },
 		[value] RefTy { ty: Box<TyRef> } => { &#ty },
 		[value] RefMut { ty: Box<TyRef> } => { &mut #ty },
@@ -56,6 +57,7 @@ impl TyRef {
 
 	pub fn contains(&self, other: &Generic) -> bool {
 		match self {
+			Self::Unit(_) => false,
 			Self::Path(value)
 				if value
 					.path
@@ -89,6 +91,7 @@ impl TyRef {
 
 	pub fn associated_type_of(&self, other: &Generic) -> Vec<Generic> {
 		match self {
+			Self::Unit(_) => vec![],
 			Self::Path(value)
 				if value
 					.path
@@ -124,6 +127,7 @@ impl TyRef {
 
 	pub fn without_bounds(&self) -> Self {
 		match self.clone() {
+			Self::Unit(value) => Self::Unit(value),
 			Self::Path(mut value) => {
 				for generic in &mut value.generics {
 					*generic = generic.without_bounds();
