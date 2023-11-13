@@ -1,5 +1,6 @@
 use attr::Attr;
 use expr::{Block, Constructor};
+use generic::Generic;
 use name::Name;
 use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
@@ -8,6 +9,7 @@ use tyref::TyRef;
 
 pub mod attr;
 pub mod expr;
+pub mod generic;
 pub mod name;
 pub mod tyref;
 
@@ -171,7 +173,7 @@ macro_rules! enum_definitions {
 	    	impl quote::ToTokens for $variant {
 	    		fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
 	    			$(let $var_name = &self.$var_name;)*
-	    			tokens.extend(quote::quote!($tokens));
+	    			tokens.extend(quote::quote! $tokens);
 	    		}
 	    	}
 	    )*
@@ -185,6 +187,8 @@ macro_rules! enum_definitions {
 #[derive(Debug, Clone)]
 pub struct Struct {
 	pub name: Name,
+	pub attrs: Vec<Attr>,
+	pub generics: Vec<Generic>,
 	pub fields: Vec<Field>,
 }
 
@@ -192,21 +196,57 @@ impl Struct {
 	pub fn new(name: impl Into<Name>) -> Self {
 		Self {
 			name: name.into(),
+			attrs: Vec::new(),
+			generics: Vec::new(),
 			fields: Vec::new(),
 		}
 	}
 
+	pub fn ty_ref(&self) -> TyRef {
+		let mut path: name::Path = self.name.clone().into();
+		path.generics = self.generics.clone();
+		path.into()
+	}
+
+	pub fn attr(&mut self, attr: impl Into<Attr>) {
+		self.attrs.push(attr.into());
+	}
+
+	pub fn generic(&mut self, generic: impl Into<Generic>) {
+		self.generics
+			.push(generic.into());
+	}
+
 	pub fn field(&mut self, name: Option<impl Into<Name>>, ty: impl Into<TyRef>) {
 		self.fields
-			.push(Field::new(name, ty, Vec::new()))
+			.push(Field::new(name, ty, Vec::new()));
 	}
 
 	pub fn impl_block(&self) -> ImplBlock {
-		ImplBlock::new(self.name.clone())
+		let generics = self
+			.generics
+			.iter()
+			.filter(|x| {
+				self.fields
+					.iter()
+					.any(|field| field.ty.contains(x))
+			})
+			.cloned()
+			.chain(
+				self.generics
+					.iter()
+					.flat_map(|x| {
+						self.fields
+							.iter()
+							.flat_map(|field| field.ty.associated_type_of(x))
+					}),
+			);
+
+		ImplBlock::new(self.ty_ref(), self.generics.clone(), generics.collect())
 	}
 
 	pub fn constructor(&self) -> Constructor {
-		Constructor::new(self.name.clone(), vec![])
+		Constructor::new(self.ty_ref(), vec![])
 	}
 
 	pub fn method(
@@ -227,8 +267,15 @@ impl ToTokens for Struct {
 	fn to_tokens(&self, tokens: &mut TokenStream) {
 		let name = &self.name;
 		let fields = &self.fields;
+		let generics = if self.generics.is_empty() {
+			None
+		} else {
+			let generics = &self.generics;
+			Some(quote!(<#(#generics),*>))
+		};
+
 		tokens.extend(quote! {
-			pub struct #name {
+			pub struct #name #generics {
 				#(#fields),*
 			}
 		});
@@ -238,12 +285,20 @@ impl ToTokens for Struct {
 impl TryFrom<DeriveInput> for Struct {
 	type Error = ();
 
-	fn try_from(value: DeriveInput) -> Result<Self, Self::Error> {
-		let mut object = Struct::new(value.ident);
+	fn try_from(input: DeriveInput) -> Result<Self, Self::Error> {
+		let mut object = Struct::new(input.ident);
 
-		let Data::Struct(value) = value.data else {
+		let Data::Struct(value) = input.data else {
 			return Err(());
 		};
+
+		for attr in input.attrs {
+			object.attr(attr);
+		}
+
+		for generic in input.generics.params {
+			object.generic(generic);
+		}
 
 		for field in value.fields {
 			object
@@ -298,15 +353,21 @@ impl From<syn::Field> for Field {
 
 pub struct ImplBlock {
 	for_trait: Option<TyRef>,
+	generics: Vec<Generic>,
 	tyref: TyRef,
+	where_bound: Vec<Generic>,
+	bound_overwrite: Option<String>,
 	functions: Vec<Function>,
 }
 
 impl ImplBlock {
-	pub fn new(tyref: impl Into<TyRef>) -> Self {
+	pub fn new(tyref: impl Into<TyRef>, generics: Vec<Generic>, where_bound: Vec<Generic>) -> Self {
 		Self {
 			for_trait: None,
+			generics,
 			tyref: tyref.into(),
+			where_bound,
+			bound_overwrite: None,
 			functions: Vec::new(),
 		}
 	}
@@ -327,6 +388,11 @@ impl ImplBlock {
 		self.functions.push(function);
 	}
 
+	pub fn trait_bound(&mut self, bound: String) -> &mut Self {
+		self.bound_overwrite = Some(bound);
+		self
+	}
+
 	pub fn for_trait(&mut self, for_trait: impl Into<TyRef>) -> &mut Self {
 		self.for_trait = Some(for_trait.into());
 		self
@@ -335,15 +401,40 @@ impl ImplBlock {
 
 impl ToTokens for ImplBlock {
 	fn to_tokens(&self, tokens: &mut TokenStream) {
-		let tyref = &self.tyref;
+		let tyref = &self.tyref.without_bounds();
 		let functions = &self.functions;
 		let trait_ref = self
 			.for_trait
 			.as_ref()
 			.map(|x| quote!(#x for));
 
+		let where_bound = match (
+			self.where_bound.len(),
+			&self.for_trait,
+			&self.bound_overwrite,
+		) {
+			(_, _, Some(overwrite)) => {
+				let overwrite: TokenStream = overwrite.parse().unwrap();
+				Some(quote!(where #overwrite))
+			}
+			(0, _, _) => None,
+			(_, None, _) => None,
+			(_, Some(trait_ref), _) => {
+				let generics = &self.where_bound;
+
+				Some(quote!(where #(#generics: #trait_ref,)*))
+			}
+		};
+
+		let generics = if self.generics.is_empty() {
+			None
+		} else {
+			let generics = &self.generics;
+			Some(quote!(<#(#generics),*>))
+		};
+
 		tokens.extend(quote! {
-			impl #trait_ref #tyref {
+			impl #generics #trait_ref #tyref #where_bound {
 				#(#functions)*
 			}
 		})
@@ -402,9 +493,6 @@ impl ToTokens for Function {
 			.map(|x| quote! {#x})
 			.collect::<Vec<_>>();
 
-		// If we do not return anything, add a semicolon after the last stmt
-		let semi = if ret.is_none() { Some(quote!(;)) } else { None };
-
 		if let Some(kind) = kind {
 			args.insert(0, kind);
 		}
@@ -414,11 +502,7 @@ impl ToTokens for Function {
 			.then_some(quote!(pub));
 
 		tokens.extend(quote! {
-			#is_pub fn #name(#(#args),*) #ret {
-				#block
-
-				#semi
-			}
+			#is_pub fn #name(#(#args),*) #ret #block
 		})
 	}
 }

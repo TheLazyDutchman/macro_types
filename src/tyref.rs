@@ -1,4 +1,7 @@
-use crate::name::{self, Name};
+use crate::{
+	generic::{self, Generic},
+	name::{self},
+};
 
 crate::enum_definitions! {
 	pub enum TyRef {
@@ -30,7 +33,8 @@ impl TyRef {
 				.generics
 				.first()
 				.map(|x| match x {
-					name::Generic::TyRef(value) => value.clone(),
+					Generic::Type(value) => value.ty_ref.clone(),
+					_ => unimplemented!(),
 				})
 				.ok_or_else(|| self.clone()),
 			Self::RefTy(value) => Ok(value.clone().into()),
@@ -47,6 +51,94 @@ impl TyRef {
 			}
 			Wrapping::Ref => self.ref_ty().into(),
 			Wrapping::RefMut => self.ref_mut().into(),
+		}
+	}
+
+	pub fn contains(&self, other: &Generic) -> bool {
+		match self {
+			Self::Path(value)
+				if value
+					.path
+					.segments
+					.last()
+					.cloned() != Some("PhantomData".into()) =>
+			{
+				if let Generic::Type(generic::Type {
+					ty_ref: Self::Path(other),
+					..
+				}) = other
+				{
+					if value.path == other.path {
+						return true;
+					}
+				}
+
+				for generic in &value.generics {
+					if generic.contains(other) {
+						return true;
+					}
+				}
+
+				false
+			}
+			Self::Path(_) => false,
+			Self::RefTy(value) => value.contains(other),
+			Self::RefMut(value) => value.contains(other),
+		}
+	}
+
+	pub fn associated_type_of(&self, other: &Generic) -> Vec<Generic> {
+		match self {
+			Self::Path(value)
+				if value
+					.path
+					.segments
+					.last()
+					.cloned() != Some("PhantomData".into()) =>
+			{
+				let Generic::Type(generic::Type {
+					ty_ref: Self::Path(path),
+					..
+				}) = other
+				else {
+					return Vec::new();
+				};
+
+				let mut generics: Vec<Generic> = value
+					.generics
+					.iter()
+					.map(|x| x.associated_type_of(other))
+					.flatten()
+					.collect();
+
+				if value.path.segments.first() == path.segments.first() {
+					generics.push(Generic::Type(self.clone().into()));
+				}
+				generics
+			}
+			Self::Path(_) => Vec::new(),
+			Self::RefTy(value) => value.associated_type_of(other),
+			Self::RefMut(value) => value.associated_type_of(other),
+		}
+	}
+
+	pub fn without_bounds(&self) -> Self {
+		match self.clone() {
+			Self::Path(mut value) => {
+				for generic in &mut value.generics {
+					*generic = generic.without_bounds();
+				}
+
+				Self::Path(value)
+			}
+			TyRef::RefTy(value) => value
+				.without_bounds()
+				.ref_ty()
+				.into(),
+			TyRef::RefMut(value) => value
+				.without_bounds()
+				.ref_mut()
+				.into(),
 		}
 	}
 }
@@ -91,6 +183,21 @@ where
 {
 	fn from(value: T) -> Self {
 		Self::Path(Path::from(name::Path::from(value)))
+	}
+}
+
+impl From<syn::TypeParamBound> for TyRef {
+	fn from(value: syn::TypeParamBound) -> Self {
+		match value {
+			syn::TypeParamBound::Trait(value) => value.into(),
+			_ => unimplemented!(),
+		}
+	}
+}
+
+impl From<syn::TraitBound> for TyRef {
+	fn from(value: syn::TraitBound) -> Self {
+		value.path.into()
 	}
 }
 

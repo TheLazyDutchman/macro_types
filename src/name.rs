@@ -1,8 +1,8 @@
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::{quote, ToTokens, TokenStreamExt};
-use syn::{GenericArgument, LitStr, PathArguments};
+use syn::{LitStr, PathArguments};
 
-use crate::tyref::TyRef;
+use crate::generic::Generic;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Name(Ident);
@@ -129,54 +129,5 @@ where
 {
 	fn from(value: T) -> Self {
 		vec![value].into()
-	}
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Generic {
-	TyRef(TyRef),
-}
-
-impl ToTokens for Generic {
-	fn to_tokens(&self, tokens: &mut TokenStream) {
-		match self {
-			Generic::TyRef(value) => value.to_tokens(tokens),
-		}
-	}
-}
-
-impl From<GenericArgument> for Generic {
-	fn from(value: GenericArgument) -> Self {
-		match value {
-			GenericArgument::Lifetime(_) => unimplemented!(),
-			GenericArgument::Type(value) => Self::TyRef(value.into()),
-			GenericArgument::Const(_) => unimplemented!(),
-			GenericArgument::AssocType(_) => unimplemented!(),
-			GenericArgument::AssocConst(_) => unimplemented!(),
-			GenericArgument::Constraint(_) => unimplemented!(),
-			_ => unimplemented!(),
-		}
-	}
-}
-
-impl From<syn::Type> for Generic {
-	fn from(value: syn::Type) -> Self {
-		Self::TyRef(value.into())
-	}
-}
-
-impl TryFrom<Generic> for TyRef {
-	type Error = ();
-
-	fn try_from(value: Generic) -> Result<Self, Self::Error> {
-		match value {
-			Generic::TyRef(value) => Ok(value),
-		}
-	}
-}
-
-impl From<TyRef> for Generic {
-	fn from(value: TyRef) -> Self {
-		Self::TyRef(value)
 	}
 }

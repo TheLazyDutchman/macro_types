@@ -7,11 +7,15 @@ use crate::{
 
 crate::enum_definitions! {
 	pub enum Expr {
+		String { value: std::string::String } => { #value },
+		Number { value: usize } => { #value },
 		Variable { path: Path } => { #path },
 		[value] Field { value: Box<Expr>, field: crate::name::Name } => { #value.#field },
 		[value] Unwrap { value: Box<Expr> } => { #value? },
 		[value] Assign { variable: Box<Expr>, value: Box<Expr> } => { #variable = #value },
 		[value] Call { func: Box<Expr>, args: Vec<Expr> } => { #func(#(#args),*) },
+		[value] CallMacro { func: Box<Expr>, args: Vec<Expr> } => { #func!(#(#args),*) },
+		[value] Reference { value: Box<Expr> } => { &#value },
 		Block { exprs: Vec<Expr> } => {{ #(#exprs);* }},
 		Constructor { owner: TyRef, fields: Vec<ConstructorField> } => { #owner { #(#fields),* }}
 	}
@@ -51,5 +55,11 @@ where
 {
 	fn from(value: T) -> Self {
 		Expr::Variable(Variable::new(value))
+	}
+}
+
+impl<'a> From<&'a str> for String {
+	fn from(value: &'a str) -> Self {
+		value.to_string().into()
 	}
 }
