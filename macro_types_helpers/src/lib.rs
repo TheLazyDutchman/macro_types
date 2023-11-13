@@ -1,10 +1,11 @@
 use macro_types::{
 	expr::{self, Expr, ExprValue, MatchVariant, Variable},
 	name::Path,
-	tyref::{TyRef, Unit},
-	Arg, Enum, FunctionKind,
+	tyref::{TyRef, TyRefValue, Unit},
+	Arg, Enum, FunctionKind, Struct,
 };
 use proc_macro::TokenStream;
+use quote::ToTokens;
 use syn::{parse_macro_input, DeriveInput};
 
 /// Derives [`From`] and [`TryInto`] for all unit
@@ -129,4 +130,110 @@ pub fn derive_into(input: TokenStream) -> TokenStream {
 	}
 
 	stream.into()
+}
+
+/// Derives the [`ToTokens`] trait for types
+///
+/// ```rust
+/// use macro_types_helpers::ToTokens;
+///
+/// #[derive(ToTokens)]
+/// enum Value {
+///		Single(String),
+///		SingleNamed { value: usize },
+/// }
+///
+/// fn assert_to_tokens<T: quote::ToTokens>(value: T) {}
+///
+/// # fn main() {
+/// assert_to_tokens(Value::Single("Hello, World!".to_string()));
+///
+/// let value = Value::Single("Hello, World".to_string());
+/// assert_eq!(
+/// quote::quote!(#value).to_string(),
+/// quote::quote!("Hello, World").to_string()
+/// )
+/// # }
+/// ```
+#[proc_macro_derive(ToTokens)]
+pub fn derive_to_tokens(input: TokenStream) -> TokenStream {
+	let input = parse_macro_input!(input as DeriveInput);
+
+	let object_enum: Result<Enum, _> = input.clone().try_into();
+	let object_struct: Result<Struct, _> = input.try_into();
+
+	if let Ok(object_enum) = object_enum {
+		derive_to_tokens_enum(object_enum)
+	} else if let Ok(object_struct) = object_struct {
+		derive_to_tokens_struct(object_struct)
+	} else {
+		// TODO: Add errors
+		TokenStream::new()
+	}
+}
+
+fn derive_to_tokens_struct(_object_struct: Struct) -> TokenStream {
+	todo!()
+}
+
+fn derive_to_tokens_enum(object: Enum) -> TokenStream {
+	let mut impl_block = object.impl_block();
+
+	impl_block.for_trait(vec!["quote", "ToTokens"]);
+
+	let mut match_expr = "self".match_expr(vec![]);
+
+	for variant in object.variants {
+		let is_tuple = variant.fields.is_empty()
+			|| variant.fields[0]
+				.name
+				.is_none();
+
+		let field_names = variant
+			.fields
+			.iter()
+			.enumerate()
+			.map(|(index, field)| {
+				field
+					.name
+					.clone()
+					.unwrap_or(format!("value{index}").into())
+			})
+			.collect::<Vec<_>>();
+
+		let variant_expr = "tokens"
+			.field("extend")
+			.call(vec![vec!["quote", "quote"]
+				.call_macro(vec![field_names
+					.first()
+					.unwrap()
+					.clone()
+					.prepend_pound()
+					.into()])
+				.into()]);
+
+		match_expr.variant(
+			vec![object.name.clone(), variant.name],
+			field_names,
+			variant_expr,
+			is_tuple,
+			false,
+		);
+	}
+
+	let ret_ty: Option<TyRef> = None;
+	impl_block.function(
+		"to_tokens",
+		FunctionKind::Ref,
+		vec![Arg::new(
+			"tokens",
+			vec!["proc_macro2", "TokenStream"].ref_mut(),
+		)],
+		ret_ty,
+		vec![match_expr.into()],
+	);
+
+	impl_block
+		.into_token_stream()
+		.into()
 }

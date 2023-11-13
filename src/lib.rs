@@ -29,7 +29,7 @@ macro_rules! enum_definitions {
     	}
 	) => {
 		paste::paste! {
-        	#[derive(Debug, Clone, PartialEq, Eq)]
+        	#[derive(Debug, Clone, PartialEq, Eq, macro_types_helpers::Into)]
 			pub enum $name {
 		    	$($variant($variant)),*
 			}
@@ -54,25 +54,10 @@ macro_rules! enum_definitions {
 
             	crate::enum_definitions!(@new_func $variant { $($var_name: $var_ty),* });
 
-            	impl From<$variant> for $name {
-                	fn from(value: $variant) -> $name {
-                    	Self::$variant(value)
-                	}
-            	}
 
             	impl From<$variant> for std::boxed::Box<$name> {
                 	fn from(value: $variant) -> std::boxed::Box<$name> {
                     	std::boxed::Box::new($name::$variant(value))
-                	}
-            	}
-
-            	impl TryInto<$variant> for $name {
-                	type Error = crate::Error;
-
-                	fn try_into(self) -> std::result::Result<$variant, Self::Error> {
-                    	paste::paste! {
-                        	self.[<into_ $variant:snake>]().map_err(|x| crate::Error::WrongVariant{ expected: stringify!($variant), found: x.variant_name() })
-                    	}
                 	}
             	}
 
@@ -103,14 +88,6 @@ macro_rules! enum_definitions {
                         }
                     }
                 )*
-
-                fn variant_name(&self) -> &'static str {
-                    match self {
-                        $(
-                            Self::$variant(_) => stringify!($variant),
-                        )*
-                    }
-                }
 	    	}
 
 	        pub trait [<$name Value>] {

@@ -13,6 +13,8 @@ crate::enum_definitions! {
 		Variable { path: Path } => { #path },
 		[value] Field { value: Box<Expr>, field: crate::name::Name } => { #value.#field },
 		[value] Unwrap { value: Box<Expr> } => { #value? },
+		[value] PrependPound { value: Box<Expr> } => { ##value },
+		[value] PrependDollar { value: Box<Expr> } => { $#value? },
 		[value] Assign { variable: Box<Expr>, value: Box<Expr> } => { #variable = #value },
 		[value] Call { func: Box<Expr>, args: Vec<Expr> } => { #func(#(#args),*) },
 		[value] CallMacro { func: Box<Expr>, args: Vec<Expr> } => { #func!(#(#args),*) },
