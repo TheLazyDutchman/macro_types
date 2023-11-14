@@ -29,7 +29,7 @@ macro_rules! enum_definitions {
     	}
 	) => {
 		paste::paste! {
-        	#[derive(Debug, Clone, PartialEq, Eq, macro_types_helpers::Into)]
+        	#[derive(Debug, Clone, PartialEq, Eq, macro_types_helpers::Into, macro_types_helpers::ToTokens)]
 			pub enum $name {
 		    	$($variant($variant)),*
 			}
@@ -136,16 +136,6 @@ macro_rules! enum_definitions {
         $($([$is_value:ident])? $variant:ident{$($var_name:ident: $var_ty:ty),*} => $tokens:tt),*
         $(,)?
     }) => {
-	    impl quote::ToTokens for $name {
-	        fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-	            match self {
-	                $(
-	                    $name::$variant(value) => value.to_tokens(tokens)
-	                ),*
-	            }
-	        }
-	    }
-
 	    $(
 	    	impl quote::ToTokens for $variant {
 	    		fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {

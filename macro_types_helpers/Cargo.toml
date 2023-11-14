@@ -1,6 +1,6 @@
 [package]
 name = "macro_types_helpers"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 description = "An internal helper library for macro_types"
 license = "MIT OR Apache-2.0"

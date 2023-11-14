@@ -220,6 +220,14 @@ pub fn derive_into(input: TokenStream) -> TokenStream {
 /// 	second: usize
 /// }
 ///
+/// #[derive(ToTokens)]
+/// #[to_tokens = "#(#0),*"]
+/// struct Sequence(Vec<String>);
+///
+/// #[derive(ToTokens)]
+/// #[to_tokens = "#(#values),*"]
+/// struct SequenceNamed{ values: Vec<usize> }
+///
 /// fn assert_tokens_equal<T: quote::ToTokens, U: quote::ToTokens>(left: T, right: U) {
 /// 	assert_eq!(
 /// 		quote::quote!(#left).to_string(),
@@ -243,6 +251,14 @@ pub fn derive_into(input: TokenStream) -> TokenStream {
 /// 		first: "Hello, World",
 /// 		second: 69usize
 /// 	})
+/// );
+/// assert_tokens_equal(
+///     Sequence(vec!["Hello".to_string(), " World".to_string()]),
+///     quote::quote!("Hello", "World")
+/// );
+/// assert_tokens_equal(
+///     SequenceNamed { values: vec![69, 420] },
+///     quote::quote!(69usize, 420usize)
 /// );
 /// # }
 /// ```
@@ -403,10 +419,31 @@ fn fields_to_tokens_expr(
 			let mut value = value.value.value();
 
 			if is_tuple {
-				let parts = value
-					.split('#')
-					.collect::<Vec<_>>();
-				value = parts.join("#value");
+				eprintln!("{value}");
+				let mut new_value = String::new();
+				if value.starts_with('#') {
+					new_value.push('#');
+				}
+
+				for part in value.split('#') {
+					if new_value.is_empty() {
+						new_value += part;
+						continue;
+					}
+
+					if let Some(part) = part.chars().next() {
+						if part.is_numeric() {
+							new_value += "#value";
+						} else {
+							new_value += "#";
+						}
+					}
+
+					new_value += part;
+				}
+				eprintln!("{new_value}");
+
+				value = new_value;
 			}
 
 			let value: proc_macro2::TokenStream = value.parse().unwrap();
