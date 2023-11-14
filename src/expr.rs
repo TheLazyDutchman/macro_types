@@ -1,7 +1,7 @@
 use quote::{quote, ToTokens};
 
 use crate::{
-	name::{Name, Path},
+	name::{self, Name, Path},
 	tyref::TyRef,
 };
 
@@ -11,17 +11,20 @@ crate::enum_definitions! {
 		String { value: std::string::String } => { #value },
 		Number { value: usize } => { #value },
 		Variable { path: Path } => { #path },
-		[value] Field { value: Box<Expr>, field: crate::name::Name } => { #value.#field },
+		[value] Field { value: Box<Expr>, field: name::Name } => { #value.#field },
+		[value] Index { value: Box<Expr>, field: syn::Index } => { #value.#field },
 		[value] Unwrap { value: Box<Expr> } => { #value? },
 		[value] PrependPound { value: Box<Expr> } => { ##value },
 		[value] PrependDollar { value: Box<Expr> } => { $#value? },
 		[value] Assign { variable: Box<Expr>, value: Box<Expr> } => { #variable = #value },
+		[value] LetAssign { variable: Box<Expr>, value: Box<Expr> } => { let #variable = #value },
 		[value] Call { func: Box<Expr>, args: Vec<Expr> } => { #func(#(#args),*) },
 		[value] CallMacro { func: Box<Expr>, args: Vec<Expr> } => { #func!(#(#args),*) },
 		[value] Reference { value: Box<Expr> } => { &#value },
 		Block { exprs: Vec<Expr> } => {{ #(#exprs);* }},
 		Constructor { owner: TyRef, fields: ConstructorFields } => { #owner #fields },
 		[value] MatchExpr { value: Box<Expr>, variants: Vec<MatchVariant> } => { match #value { #(#variants),* } },
+		TokenStream { value: Tokens } => { #value },
 	}
 }
 
@@ -181,8 +184,46 @@ where
 	}
 }
 
+impl<T> From<T> for Box<Expr>
+where
+	Path: From<T>,
+{
+	fn from(value: T) -> Self {
+		Box::new(Expr::Variable(Variable::new(value)))
+	}
+}
+
 impl<'a> From<&'a str> for String {
 	fn from(value: &'a str) -> Self {
 		value.to_string().into()
+	}
+}
+
+#[derive(Debug, Clone)]
+pub struct Tokens(proc_macro2::TokenStream);
+
+impl PartialEq for Tokens {
+	fn eq(&self, other: &Self) -> bool {
+		self.0.to_string() == other.0.to_string()
+	}
+}
+
+impl Eq for Tokens {}
+
+impl ToTokens for Tokens {
+	fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+		self.0.to_tokens(tokens)
+	}
+}
+
+impl From<proc_macro2::TokenStream> for Expr {
+	fn from(value: proc_macro2::TokenStream) -> Self {
+		Self::TokenStream(Tokens(value).into())
+	}
+}
+
+impl From<usize> for Expr {
+	fn from(value: usize) -> Self {
+		Expr::Number(value.into())
 	}
 }

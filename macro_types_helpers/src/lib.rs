@@ -1,4 +1,5 @@
 use macro_types::{
+	attr::{Attr, AttrValue},
 	expr::{self, Expr, ExprValue, MatchVariant, Variable},
 	name::Path,
 	tyref::{TyRef, TyRefValue, Unit},
@@ -139,23 +140,113 @@ pub fn derive_into(input: TokenStream) -> TokenStream {
 ///
 /// #[derive(ToTokens)]
 /// enum Value {
+///		#[to_tokens = "$"]
+///		Unit,
+///
 ///		Single(String),
+///
 ///		SingleNamed { value: usize },
+///
+///		#[to_tokens = "Test {
+///			first: #0,
+///			second: #1
+///		}"]
+///		Multiple(String,usize),
+///
+///		#[to_tokens = "Test {
+///			first: #first,
+///			second: #second
+///		}"]
+///		MultipleNamed { first: String, second: usize },
 /// }
 ///
-/// fn assert_to_tokens<T: quote::ToTokens>(value: T) {}
-///
+/// fn assert_tokens_equal<T: quote::ToTokens, U: quote::ToTokens>(left: T, right: U) {
+/// 	assert_eq!(
+/// 		quote::quote!(#left).to_string(),
+/// 		quote::quote!(#right).to_string()
+/// 	)
+/// }
 /// # fn main() {
-/// assert_to_tokens(Value::Single("Hello, World!".to_string()));
-///
-/// let value = Value::Single("Hello, World".to_string());
-/// assert_eq!(
-/// quote::quote!(#value).to_string(),
-/// quote::quote!("Hello, World").to_string()
-/// )
+/// assert_tokens_equal(Value::Unit, quote::quote!($));
+/// assert_tokens_equal(Value::Single("Hello, World".to_string()), "Hello, World".to_string());
+/// assert_tokens_equal(Value::SingleNamed { value: 69 }, 69usize);
+/// assert_tokens_equal(
+/// 	Value::Multiple("Hello, World".to_string(),69),
+/// 	quote::quote!(Test {
+/// 		first: "Hello, World",
+/// 		second: 69usize
+/// 	})
+/// );
+/// assert_tokens_equal(
+/// 	Value::MultipleNamed { first: "Hello, World".to_string(), second: 69 },
+/// 	quote::quote!(Test {
+/// 		first: "Hello, World",
+/// 		second: 69usize
+/// 	})
+/// );
 /// # }
 /// ```
-#[proc_macro_derive(ToTokens)]
+///
+/// It also works for structs
+/// ```rust
+/// use macro_types_helpers::ToTokens;
+///
+/// #[derive(ToTokens)]
+/// #[to_tokens = "$"]
+/// struct Unit;
+///
+/// #[derive(ToTokens)]
+/// struct Single(String);
+///
+/// #[derive(ToTokens)]
+/// struct SingleNamed {
+/// 	value: usize
+/// }
+///
+/// #[derive(ToTokens)]
+///	#[to_tokens = "Test {
+///		first: #0,
+///		second: #1
+///	}"]
+/// struct Multiple(String, usize);
+///
+/// #[derive(ToTokens)]
+///	#[to_tokens = "Test {
+///		first: #first,
+///		second: #second
+///	}"]
+/// struct MultipleNamed {
+/// 	first: String,
+/// 	second: usize
+/// }
+///
+/// fn assert_tokens_equal<T: quote::ToTokens, U: quote::ToTokens>(left: T, right: U) {
+/// 	assert_eq!(
+/// 		quote::quote!(#left).to_string(),
+/// 		quote::quote!(#right).to_string()
+/// 	)
+/// }
+/// # fn main() {
+/// assert_tokens_equal(Unit, quote::quote!($));
+/// assert_tokens_equal(Single("Hello, World".to_string()), "Hello, World".to_string());
+/// assert_tokens_equal(SingleNamed { value: 69 }, 69usize);
+/// assert_tokens_equal(
+/// 	Multiple("Hello, World".to_string(),69),
+/// 	quote::quote!(Test {
+/// 		first: "Hello, World",
+/// 		second: 69usize
+/// 	})
+/// );
+/// assert_tokens_equal(
+/// 	MultipleNamed { first: "Hello, World".to_string(), second: 69 },
+/// 	quote::quote!(Test {
+/// 		first: "Hello, World",
+/// 		second: 69usize
+/// 	})
+/// );
+/// # }
+/// ```
+#[proc_macro_derive(ToTokens, attributes(to_tokens))]
 pub fn derive_to_tokens(input: TokenStream) -> TokenStream {
 	let input = parse_macro_input!(input as DeriveInput);
 
@@ -172,8 +263,70 @@ pub fn derive_to_tokens(input: TokenStream) -> TokenStream {
 	}
 }
 
-fn derive_to_tokens_struct(_object_struct: Struct) -> TokenStream {
-	todo!()
+fn derive_to_tokens_struct(object: Struct) -> TokenStream {
+	let mut impl_block = object.impl_block();
+
+	impl_block.for_trait(vec!["quote", "ToTokens"]);
+
+	let mut exprs: Vec<Expr> = Vec::new();
+
+	let mut field_names = Vec::new();
+
+	for (index, field) in object
+		.fields
+		.iter()
+		.enumerate()
+	{
+		let mut field_expr: Expr = "self".into();
+
+		if let Some(name) = field.name.clone() {
+			field_expr = field_expr.field(name).into();
+		} else {
+			field_expr = field_expr.index(index).into();
+		}
+
+		let variable_name = field
+			.name
+			.clone()
+			.unwrap_or(format!("value{index}").into());
+
+		exprs.push(
+			variable_name
+				.clone()
+				.let_assign(field_expr.reference())
+				.into(),
+		);
+
+		field_names.push(variable_name);
+	}
+
+	exprs.push(
+		fields_to_tokens_expr(
+			&field_names,
+			&object.attrs,
+			object
+				.fields
+				.first()
+				.is_some_and(|x| x.name.is_none()),
+		)
+		.unwrap(),
+	);
+
+	let ret_ty: Option<TyRef> = None;
+	impl_block.function(
+		"to_tokens",
+		FunctionKind::Ref,
+		vec![Arg::new(
+			"tokens",
+			vec!["proc_macro2", "TokenStream"].ref_mut(),
+		)],
+		ret_ty,
+		exprs,
+	);
+
+	impl_block
+		.into_token_stream()
+		.into()
 }
 
 fn derive_to_tokens_enum(object: Enum) -> TokenStream {
@@ -201,16 +354,15 @@ fn derive_to_tokens_enum(object: Enum) -> TokenStream {
 			})
 			.collect::<Vec<_>>();
 
-		let variant_expr = "tokens"
-			.field("extend")
-			.call(vec![vec!["quote", "quote"]
-				.call_macro(vec![field_names
-					.first()
-					.unwrap()
-					.clone()
-					.prepend_pound()
-					.into()])
-				.into()]);
+		let variant_expr = fields_to_tokens_expr(
+			&field_names,
+			&variant.attrs,
+			variant
+				.fields
+				.first()
+				.is_some_and(|x| x.name.is_none()),
+		)
+		.unwrap();
 
 		match_expr.variant(
 			vec![object.name.clone(), variant.name],
@@ -236,4 +388,48 @@ fn derive_to_tokens_enum(object: Enum) -> TokenStream {
 	impl_block
 		.into_token_stream()
 		.into()
+}
+
+fn fields_to_tokens_expr(
+	names: &[impl Into<Expr> + Clone],
+	attrs: &[Attr],
+	is_tuple: bool,
+) -> Result<Expr, &'static str> {
+	let expr: Expr = if let Some(attr) = attrs
+		.iter()
+		.find(|x| x.name == "to_tokens".into())
+	{
+		if let AttrValue::Value(value) = &attr.value {
+			let mut value = value.value.value();
+
+			if is_tuple {
+				let parts = value
+					.split('#')
+					.collect::<Vec<_>>();
+				value = parts.join("#value");
+			}
+
+			let value: proc_macro2::TokenStream = value.parse().unwrap();
+			value.into()
+		} else {
+			return Err(r#"to_tokens helper macro should be a name value pair"#);
+		}
+	} else if names.len() == 1 {
+		names[0]
+			.clone()
+			.into()
+			.prepend_pound()
+			.into()
+	} else {
+		return Err(
+			r#"If you don't have fields, or have more than one, you need to use #[to_tokens "..."]"#,
+		);
+	};
+
+	Ok("tokens"
+		.field("extend")
+		.call(vec![vec!["quote", "quote"]
+			.call_macro(vec![expr])
+			.into()])
+		.into())
 }

@@ -17,7 +17,12 @@ impl<T> TyRefValue for T where name::Path: From<T> {}
 impl TyRef {
 	pub fn wrapping(&self) -> Option<Wrapping> {
 		match self {
-			Self::Path(value) if value.generics.len() == 1 => Some(Wrapping::Path(value.clone())),
+			Self::Path(value) if value.generics.len() == 1 => {
+				let mut value = value.clone();
+				value.generics.clear();
+
+				Some(Wrapping::Path(value))
+			}
 			Self::RefTy(_) => Some(Wrapping::Ref),
 			Self::RefMut(_) => Some(Wrapping::RefMut),
 			_ => None,
