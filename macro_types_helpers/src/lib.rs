@@ -1,13 +1,13 @@
 use macro_types::{
 	attr::{Attr, AttrValue},
 	expr::{self, Expr, ExprValue, MatchVariant, Variable},
-	name::Path,
+	item::{self, DeriveInput, Enum, Item, Struct},
+	name::{Name, Path},
 	tyref::{TyRef, TyRefValue, Unit},
-	Arg, Enum, FunctionKind, Struct,
+	Arg, FunctionKind, ImplBlock,
 };
 use proc_macro::TokenStream;
-use quote::ToTokens;
-use syn::{parse_macro_input, DeriveInput};
+use syn::parse_macro_input;
 
 /// Derives [`From`] and [`TryInto`] for all unit
 /// variants
@@ -38,9 +38,17 @@ use syn::{parse_macro_input, DeriveInput};
 /// ```
 #[proc_macro_derive(Into)]
 pub fn derive_into(input: TokenStream) -> TokenStream {
-	let input = parse_macro_input!(input as DeriveInput);
+	let input = parse_macro_input!(input as syn::DeriveInput);
 
-	let object: Enum = input.try_into().unwrap();
+	let object: Item<DeriveInput> = input.into();
+
+	let span = object.span();
+
+	let Ok(object): Result<Item<Enum>, _> = object.require_enum() else {
+		return syn::Error::new(span, "Can only implement Into and TryInto for enums")
+			.into_compile_error()
+			.into();
+	};
 
 	let mut stream = proc_macro2::TokenStream::new();
 
@@ -254,7 +262,7 @@ pub fn derive_into(input: TokenStream) -> TokenStream {
 /// );
 /// assert_tokens_equal(
 ///     Sequence(vec!["Hello".to_string(), " World".to_string()]),
-///     quote::quote!("Hello", "World")
+///     quote::quote!("Hello", " World")
 /// );
 /// assert_tokens_equal(
 ///     SequenceNamed { values: vec![69, 420] },
@@ -264,31 +272,36 @@ pub fn derive_into(input: TokenStream) -> TokenStream {
 /// ```
 #[proc_macro_derive(ToTokens, attributes(to_tokens))]
 pub fn derive_to_tokens(input: TokenStream) -> TokenStream {
-	let input = parse_macro_input!(input as DeriveInput);
+	let input = parse_macro_input!(input as syn::DeriveInput);
 
-	let object_enum: Result<Enum, _> = input.clone().try_into();
-	let object_struct: Result<Struct, _> = input.try_into();
+	let object: Item<item::DeriveInput> = input.into();
 
-	if let Ok(object_enum) = object_enum {
-		derive_to_tokens_enum(object_enum)
-	} else if let Ok(object_struct) = object_struct {
-		derive_to_tokens_struct(object_struct)
-	} else {
-		// TODO: Add errors
-		TokenStream::new()
-	}
-}
-
-fn derive_to_tokens_struct(object: Struct) -> TokenStream {
 	let mut impl_block = object.impl_block();
-
 	impl_block.for_trait(vec!["quote", "ToTokens"]);
 
+	match &**object {
+		item::DeriveInput::Struct(value) => {
+			derive_to_tokens_struct(&mut impl_block, &object.attrs, value)
+		}
+		item::DeriveInput::Enum(value) => {
+			derive_to_tokens_enum(&mut impl_block, object.name.clone(), value)
+		}
+		item::DeriveInput::Union => {
+			return syn::Error::new(object.span(), "Cannot derive to_tokens for union")
+				.to_compile_error()
+				.into();
+		}
+	}
+
+	quote::quote!(#impl_block).into()
+}
+
+fn derive_to_tokens_struct(impl_block: &mut ImplBlock, attrs: &[Attr], value: &Struct) {
 	let mut exprs: Vec<Expr> = Vec::new();
 
 	let mut field_names = Vec::new();
 
-	for (index, field) in object
+	for (index, field) in value
 		.fields
 		.iter()
 		.enumerate()
@@ -319,8 +332,8 @@ fn derive_to_tokens_struct(object: Struct) -> TokenStream {
 	exprs.push(
 		fields_to_tokens_expr(
 			&field_names,
-			&object.attrs,
-			object
+			&attrs,
+			value
 				.fields
 				.first()
 				.is_some_and(|x| x.name.is_none()),
@@ -339,20 +352,12 @@ fn derive_to_tokens_struct(object: Struct) -> TokenStream {
 		ret_ty,
 		exprs,
 	);
-
-	impl_block
-		.into_token_stream()
-		.into()
 }
 
-fn derive_to_tokens_enum(object: Enum) -> TokenStream {
-	let mut impl_block = object.impl_block();
-
-	impl_block.for_trait(vec!["quote", "ToTokens"]);
-
+fn derive_to_tokens_enum(impl_block: &mut ImplBlock, name: Name, value: &Enum) {
 	let mut match_expr = "self".match_expr(vec![]);
 
-	for variant in object.variants {
+	for variant in &value.variants {
 		let is_tuple = variant.fields.is_empty()
 			|| variant.fields[0]
 				.name
@@ -381,7 +386,7 @@ fn derive_to_tokens_enum(object: Enum) -> TokenStream {
 		.unwrap();
 
 		match_expr.variant(
-			vec![object.name.clone(), variant.name],
+			vec![name.clone(), variant.name.clone()],
 			field_names,
 			variant_expr,
 			is_tuple,
@@ -400,10 +405,6 @@ fn derive_to_tokens_enum(object: Enum) -> TokenStream {
 		ret_ty,
 		vec![match_expr.into()],
 	);
-
-	impl_block
-		.into_token_stream()
-		.into()
 }
 
 fn fields_to_tokens_expr(
@@ -434,8 +435,8 @@ fn fields_to_tokens_expr(
 					if let Some(part) = part.chars().next() {
 						if part.is_numeric() {
 							new_value += "#value";
-						} else {
-							new_value += "#";
+							// } else {
+							// 	new_value += "#";
 						}
 					}
 

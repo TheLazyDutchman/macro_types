@@ -12,6 +12,10 @@ impl Name {
 		Ident::new(func(self.0.to_string()).as_ref(), self.0.span()).into()
 	}
 
+	pub fn span(&self) -> Span {
+		self.0.span()
+	}
+
 	pub fn inner(&self) -> &Ident {
 		&self.0
 	}

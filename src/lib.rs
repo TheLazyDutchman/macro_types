@@ -1,15 +1,17 @@
 use attr::Attr;
 use expr::{Block, Constructor};
 use generic::Generic;
+use item::HasGeneric;
 use name::Name;
 use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
-use syn::{Data, DeriveInput};
+use syn::Data;
 use tyref::TyRef;
 
 pub mod attr;
 pub mod expr;
 pub mod generic;
+pub mod item;
 pub mod name;
 pub mod tyref;
 
@@ -249,10 +251,10 @@ impl ToTokens for Struct {
 	}
 }
 
-impl TryFrom<DeriveInput> for Struct {
+impl TryFrom<syn::DeriveInput> for Struct {
 	type Error = ();
 
-	fn try_from(input: DeriveInput) -> Result<Self, Self::Error> {
+	fn try_from(input: syn::DeriveInput) -> Result<Self, Self::Error> {
 		let mut object = Struct::new(input.ident);
 
 		let Data::Struct(value) = input.data else {
@@ -331,6 +333,17 @@ impl From<syn::Field> for Field {
 				.map(Attr::from)
 				.collect(),
 		)
+	}
+}
+
+impl HasGeneric for Field {
+	fn contains(&self, generic: &Generic) -> bool {
+		self.ty.contains(generic)
+	}
+
+	fn associated_type_of(&self, generic: &Generic) -> Vec<Generic> {
+		self.ty
+			.associated_type_of(generic)
 	}
 }
 
@@ -454,10 +467,10 @@ impl ToTokens for Enum {
 	}
 }
 
-impl TryFrom<DeriveInput> for Enum {
+impl TryFrom<syn::DeriveInput> for Enum {
 	type Error = ();
 
-	fn try_from(input: DeriveInput) -> Result<Self, Self::Error> {
+	fn try_from(input: syn::DeriveInput) -> Result<Self, Self::Error> {
 		let mut object = Enum::new(input.ident);
 
 		let Data::Enum(value) = input.data else {
