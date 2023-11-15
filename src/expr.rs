@@ -25,6 +25,40 @@ crate::enum_definitions! {
 		Constructor { owner: TyRef, fields: ConstructorFields } => { #owner #fields },
 		[value] MatchExpr { value: Box<Expr>, variants: Vec<MatchVariant> } => { match #value { #(#variants),* } },
 		TokenStream { value: Tokens } => { #value },
+		[value] Unpack { expr: Box<Expr>, value: UnpackExpr } => { let #value = #expr },
+	}
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnpackExpr {
+	pub path: Path,
+	pub fields: Vec<Name>,
+	pub is_exhaustive: bool,
+}
+
+impl UnpackExpr {
+	pub fn new(path: impl Into<Path>, fields: Vec<Name>, is_exhaustive: bool) -> Self {
+		Self {
+			path: path.into(),
+			fields,
+			is_exhaustive,
+		}
+	}
+}
+
+impl ToTokens for UnpackExpr {
+	fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+		let path = &self.path;
+		let fields = &self.fields;
+
+		let mut fields = quote::quote!(#(#fields),*);
+		if self.is_exhaustive {
+			fields.extend(quote::quote!(, ..));
+		}
+
+		tokens.extend(quote::quote! {
+			#path { #fields }
+		});
 	}
 }
 
@@ -154,7 +188,7 @@ impl ToTokens for MatchVariant {
 			.map(|x| quote!(#x))
 			.collect::<Vec<_>>();
 
-		if !self.is_exhaustive {
+		if self.is_exhaustive {
 			fields.push(quote!(..));
 		}
 

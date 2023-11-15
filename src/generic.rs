@@ -1,7 +1,7 @@
 use quote::ToTokens;
 use syn::GenericArgument;
 
-use crate::tyref::TyRef;
+use crate::{name::Name, tyref::TyRef};
 
 crate::enum_definitions! {
 	pub enum Generic {
@@ -49,6 +49,18 @@ impl Generic {
 				Self::Type(value)
 			}
 			_ => unimplemented!(),
+		}
+	}
+
+	pub fn replace(&self, reference: impl Into<Name>, other: impl Into<Name>) -> Self {
+		match self {
+			Self::Type(value) => Self::Type(
+				value
+					.ty_ref
+					.replace(reference, other)
+					.into(),
+			),
+			Self::LifeTime(_) => unimplemented!(),
 		}
 	}
 }

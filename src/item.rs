@@ -1,14 +1,16 @@
+use derive_more::{Deref, DerefMut};
 use macro_types_helpers::{Into, ToTokens};
 use proc_macro2::Span;
 use quote::ToTokens;
+use syn::AssocType;
 
 use crate::{
 	attr::Attr,
-	expr::Constructor,
+	expr::{Block, Constructor},
 	generic::Generic,
 	name::{Name, Path},
 	tyref::TyRef,
-	Field, ImplBlock,
+	Field, Function, ImplBlock,
 };
 
 pub trait HasGeneric {
@@ -16,8 +18,12 @@ pub trait HasGeneric {
 	fn associated_type_of(&self, generic: &Generic) -> Vec<Generic>;
 }
 
+#[derive(Deref, DerefMut)]
 pub struct Item<T> {
+	#[deref]
+	#[deref_mut]
 	pub value: NamedItem<T>,
+
 	pub generics: Vec<Generic>,
 }
 
@@ -90,23 +96,13 @@ impl Item<DeriveInput> {
 	}
 }
 
-impl<T> std::ops::Deref for Item<T> {
-	type Target = NamedItem<T>;
-
-	fn deref(&self) -> &Self::Target {
-		&self.value
-	}
-}
-
-impl<T> std::ops::DerefMut for Item<T> {
-	fn deref_mut(&mut self) -> &mut Self::Target {
-		&mut self.value
-	}
-}
-
+#[derive(Deref, DerefMut)]
 pub struct NamedItem<T> {
 	pub attrs: Vec<Attr>,
 	pub name: Name,
+
+	#[deref]
+	#[deref_mut]
 	pub value: T,
 }
 
@@ -151,20 +147,6 @@ impl<T> NamedItem<T> {
 	}
 }
 
-impl<T> std::ops::Deref for NamedItem<T> {
-	type Target = T;
-
-	fn deref(&self) -> &Self::Target {
-		&self.value
-	}
-}
-
-impl<T> std::ops::DerefMut for NamedItem<T> {
-	fn deref_mut(&mut self) -> &mut Self::Target {
-		&mut self.value
-	}
-}
-
 impl From<syn::DeriveInput> for Item<DeriveInput> {
 	fn from(value: syn::DeriveInput) -> Self {
 		let mut item = Item::new(value.ident);
@@ -184,7 +166,7 @@ impl From<syn::DeriveInput> for Item<DeriveInput> {
 pub struct NoValue<T>(std::marker::PhantomData<T>);
 
 impl<T> Item<NoValue<T>> {
-	fn value(self, value: impl Into<T>) -> Item<T> {
+	pub fn value(self, value: impl Into<T>) -> Item<T> {
 		let Self {
 			value: old,
 			generics,
@@ -197,7 +179,7 @@ impl<T> Item<NoValue<T>> {
 }
 
 impl<T> NamedItem<NoValue<T>> {
-	fn value(self, value: impl Into<T>) -> NamedItem<T> {
+	pub fn value(self, value: impl Into<T>) -> NamedItem<T> {
 		let Self { attrs, name, .. } = self;
 		NamedItem {
 			attrs,
@@ -442,5 +424,68 @@ impl HasGeneric for Fields {
 			.iter()
 			.flat_map(|x| x.associated_type_of(generic))
 			.collect()
+	}
+}
+
+pub struct Trait {
+	pub items: Vec<TraitItem>,
+	pub super_traits: Vec<TyRef>,
+}
+
+impl Trait {
+	pub fn new(items: Vec<TraitItem>, super_traits: Vec<TyRef>) -> Self {
+		Self {
+			items,
+			super_traits,
+		}
+	}
+
+	pub fn function(
+		&mut self,
+		name: impl Into<Name>,
+		kind: crate::FunctionKind,
+		args: Vec<crate::Arg>,
+		ret_ty: Option<TyRef>,
+		block: Block,
+	) -> &mut Self {
+		let mut function = Function::new(name, kind, args, ret_ty, block);
+		function.is_pub = false;
+
+		self.items
+			.push(TraitItem::Function(function));
+		self
+	}
+
+	pub fn super_trait(&mut self, super_trait: impl Into<TyRef>) -> &mut Self {
+		self.super_traits
+			.push(super_trait.into());
+		self
+	}
+}
+
+#[derive(Into, ToTokens)]
+pub enum TraitItem {
+	Function(Function),
+	Type(AssocType),
+}
+
+impl ToTokens for Item<Trait> {
+	fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+		let name = &self.name;
+		let items = &self.items;
+
+		let super_traits = if self.super_traits.is_empty() {
+			None
+		} else {
+			let super_traits = &self.super_traits;
+			Some(quote::quote!(: #(#super_traits)+*))
+		};
+
+		// TODO: Add attrs and generics
+		tokens.extend(quote::quote! {
+			pub trait  #name #super_traits {
+				#(#items)*
+			}
+		})
 	}
 }

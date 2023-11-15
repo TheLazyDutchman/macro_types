@@ -1,6 +1,6 @@
 use crate::{
 	generic::{self, Generic},
-	name::{self},
+	name::{self, Name},
 };
 
 crate::enum_definitions! {
@@ -9,6 +9,7 @@ crate::enum_definitions! {
 		Path { path: name::Path } => { #path },
 		[value] RefTy { ty: Box<TyRef> } => { &#ty },
 		[value] RefMut { ty: Box<TyRef> } => { &mut #ty },
+		[value] ImplTrait { value: Box<TyRef> } => { impl #value },
 	}
 }
 
@@ -91,6 +92,7 @@ impl TyRef {
 			Self::Path(_) => false,
 			Self::RefTy(value) => value.contains(other),
 			Self::RefMut(value) => value.contains(other),
+			Self::ImplTrait(value) => value.contains(other),
 		}
 	}
 
@@ -127,6 +129,7 @@ impl TyRef {
 			Self::Path(_) => Vec::new(),
 			Self::RefTy(value) => value.associated_type_of(other),
 			Self::RefMut(value) => value.associated_type_of(other),
+			Self::ImplTrait(value) => value.associated_type_of(other),
 		}
 	}
 
@@ -148,7 +151,50 @@ impl TyRef {
 				.without_bounds()
 				.ref_mut()
 				.into(),
+			TyRef::ImplTrait(value) => value
+				.without_bounds()
+				.impl_trait()
+				.into(),
 		}
+	}
+
+	pub fn replace(&self, reference: impl Into<Name>, other: impl Into<Name>) -> Self {
+		let reference = reference.into();
+		let other = other.into();
+
+		let mut value = self.clone();
+		match value {
+			Self::Path(ref mut value) => {
+				if value.segments.len() == 1 && value.segments[0] == reference {
+					value.segments = vec![other.clone()];
+				}
+
+				for generic in &mut value.generics {
+					*generic = generic.replace(reference.clone(), other.clone());
+				}
+			}
+			Self::RefTy(ref mut inner) => {
+				value = inner
+					.replace(reference, other)
+					.ref_ty()
+					.into()
+			}
+			Self::RefMut(ref mut inner) => {
+				value = inner
+					.replace(reference, other)
+					.ref_mut()
+					.into()
+			}
+			Self::Unit(_) => {}
+			Self::ImplTrait(inner) => {
+				value = inner
+					.replace(reference, other)
+					.impl_trait()
+					.into()
+			}
+		};
+
+		value
 	}
 }
 

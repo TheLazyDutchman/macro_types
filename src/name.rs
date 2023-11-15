@@ -1,3 +1,4 @@
+use convert_case::{Case, Casing};
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::{quote, ToTokens, TokenStreamExt};
 use syn::{LitStr, PathArguments};
@@ -12,12 +13,22 @@ impl Name {
 		Ident::new(func(self.0.to_string()).as_ref(), self.0.span()).into()
 	}
 
+	pub fn to_snake_case(&self) -> Self {
+		self.map(|x| x.to_case(Case::Snake))
+	}
+
 	pub fn span(&self) -> Span {
 		self.0.span()
 	}
 
 	pub fn inner(&self) -> &Ident {
 		&self.0
+	}
+}
+
+impl std::fmt::Display for Name {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		self.0.fmt(f)
 	}
 }
 

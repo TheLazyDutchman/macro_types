@@ -1,12 +1,14 @@
 use macro_types::{
 	attr::{Attr, AttrValue},
-	expr::{self, Expr, ExprValue, MatchVariant, Variable},
-	item::{self, DeriveInput, Enum, Item, Struct},
+	expr::{self, Block, Expr, ExprValue, MatchVariant, UnpackExpr, Variable},
+	generic::Generic,
+	item::{self, DeriveInput, Enum, HasGeneric, Item, Struct, Trait},
 	name::{Name, Path},
-	tyref::{TyRef, TyRefValue, Unit},
+	tyref::{self, TyRef, TyRefValue, Unit, Wrapping},
 	Arg, FunctionKind, ImplBlock,
 };
 use proc_macro::TokenStream;
+use quote::ToTokens;
 use syn::parse_macro_input;
 
 /// Derives [`From`] and [`TryInto`] for all unit
@@ -470,4 +472,300 @@ fn fields_to_tokens_expr(
 			.call_macro(vec![expr])
 			.into()])
 		.into())
+}
+
+#[proc_macro_derive(Combinator)]
+pub fn derive_combinator(input: TokenStream) -> TokenStream {
+	let input = parse_macro_input!(input as syn::DeriveInput);
+
+	let input: Item<DeriveInput> = input.into();
+
+	let span = input.span();
+
+	let Ok(input) = input.require_enum() else {
+		return syn::Error::new(span, "Only an enum can be turned into a combinator.")
+			.into_compile_error()
+			.into();
+	};
+
+	let mut into_bound: Path = vec!["std", "convert", "Into"].into();
+	into_bound
+		.generics
+		.push(Generic::Type(input.name.clone().into()));
+
+	let mut trait_block: Item<Trait> = Item::new(
+		input
+			.name
+			.map(|x| format!("{x}Combinator")),
+	)
+	.value(Trait::new(vec![], vec!["Sized".into(), into_bound.into()]));
+
+	let gen_ty: TyRef = "T".into();
+
+	let mut impl_block = ImplBlock::new(gen_ty.clone(), vec![gen_ty.into()], vec![]);
+
+	impl_block.trait_bound(format!("T: std::convert::Into<{}>", input.name.clone()));
+
+	impl_block.for_trait(trait_block.name.clone());
+
+	for variant in &input.variants {
+		if variant.fields.is_empty() {
+			continue;
+		}
+
+		if !(variant.fields[0].contains(&Generic::Type(input.name.clone().into()))
+			|| variant.fields[0].contains(&Generic::Type("Self".into())))
+			|| !variant.fields[0]
+				.ty
+				.is_wrapped(Wrapping::Path(tyref::Path::new("Box")))
+		{
+			continue;
+		}
+
+		let mut constructor_expr = variant.constructor();
+		// This should always be true
+		let TyRef::Path(value) = &mut constructor_expr.owner else {
+			unreachable!()
+		};
+
+		value.path = vec![input.name.clone(), variant.name.clone()].into();
+
+		constructor_expr.add_field(
+			variant.fields[0].name.clone(),
+			vec!["std", "boxed", "Box", "new"].call(vec!["self"
+				.field("into")
+				.call(vec![])
+				.into()]),
+		);
+
+		for (index, field) in variant
+			.fields
+			.iter()
+			.skip(1)
+			.enumerate()
+		{
+			constructor_expr.add_field(
+				field.name.clone(),
+				field
+					.name
+					.clone()
+					.unwrap_or(format!("value{index}").into())
+					.field("into")
+					.call(vec![]),
+			);
+		}
+
+		trait_block.function(
+			variant.name.to_snake_case(),
+			FunctionKind::Owned,
+			variant
+				.fields
+				.iter()
+				.skip(1)
+				.enumerate()
+				.map(|(index, x)| {
+					Arg::new(
+						x.name
+							.clone()
+							.unwrap_or(format!("value{index}").into()),
+						x.ty.replace("Self", input.name.clone())
+							.wrap(Wrapping::Path(tyref::Path::new(vec![
+								"std", "convert", "Into",
+							])))
+							.impl_trait(),
+					)
+				})
+				.collect(),
+			Some(input.name.clone().into()),
+			vec![constructor_expr.into()].into(),
+		);
+	}
+
+	quote::quote!(#trait_block #impl_block).into()
+}
+
+#[proc_macro_derive(From, attributes(from))]
+pub fn derive_from(input: TokenStream) -> TokenStream {
+	let input = parse_macro_input!(input as syn::DeriveInput);
+
+	let input: Item<DeriveInput> = input.into();
+	let span = input.span();
+
+	let Ok(input) = input.require_enum() else {
+		return syn::Error::new(span, "Only an enum can be turned into a combinator.")
+			.into_compile_error()
+			.into();
+	};
+
+	let Some(attr) = input
+		.attrs
+		.iter()
+		.find(|x| x.name == "from".into())
+	else {
+		return syn::Error::new(span, "From derive macro requires an attribute to determine what type to convert from, like: `#[from(...names)]`").into_compile_error().into();
+	};
+
+	let AttrValue::Value(name) = &attr.value else {
+		return syn::Error::new(
+			attr.span(),
+			r#"The from attr needs to be of the form `#[from = "{name}"]`, where name is the name from which this enum can be converted."#
+		)
+		.into_compile_error()
+		.into();
+	};
+
+	let name = name.value.value();
+	let parts = name
+		.split("::")
+		.collect::<Vec<_>>();
+	let name: Path = parts.into();
+
+	let mut impl_block = input.impl_block();
+
+	let mut path: Path = vec!["std", "convert", "From"].into();
+	path.generics
+		.push(Generic::Type(name.clone().into()));
+
+	impl_block.for_trait(path);
+
+	let mut match_expr = "value".match_expr(vec![]);
+
+	for variant in &input.variants {
+		let mut from_name = name.clone();
+		from_name
+			.segments
+			.push(variant.name.clone());
+
+		let into_name = vec![input.name.clone(), variant.name.clone()];
+
+		let mut fields = Vec::new();
+		let mut constructor_expr = variant.constructor();
+		constructor_expr.owner = into_name.into();
+
+		for (index, field) in variant
+			.fields
+			.iter()
+			.enumerate()
+		{
+			let name = field
+				.name
+				.clone()
+				.unwrap_or_else(|| format!("value{index}").into());
+
+			let mut expr: Expr = name.clone().into();
+			if let Some(attr) = field
+				.attrs
+				.iter()
+				.find(|x| x.name == "from".into())
+			{
+				if let AttrValue::Value(value) = &attr.value {
+					let value = value.value.value();
+					let functions = value.split(",");
+
+					for function in functions {
+						expr = expr
+							.field(function)
+							.call(vec![])
+							.into();
+					}
+				} else {
+					expr = expr
+						.field("into")
+						.call(vec![])
+						.into();
+				}
+			} else {
+				expr = expr
+					.field("into")
+					.call(vec![])
+					.into();
+			}
+
+			constructor_expr.add_field(field.name.clone(), expr);
+
+			fields.push(name);
+		}
+
+		match variant
+			.attrs
+			.iter()
+			.find(|x| x.name == "from".into())
+		{
+			None => {
+				match_expr.variant(
+					from_name,
+					fields,
+					constructor_expr,
+					variant.fields.is_empty()
+						|| variant.fields[0]
+							.name
+							.is_none(),
+					false,
+				);
+			}
+			Some(attr) => {
+				let AttrValue::List(values) = &attr.value else {
+					return syn::Error::new(
+						attr.span(),
+						"from attribute has to be a list of values",
+					)
+					.to_compile_error()
+					.into();
+				};
+
+				let Some(value) = values.values.first() else {
+					return syn::Error::new(
+						attr.span(),
+						"attribute has to have at least a single value",
+					)
+					.to_compile_error()
+					.into();
+				};
+
+				if value.name != "unwrap".into() {
+					return syn::Error::new(
+						attr.span(),
+						"Currently, the only option supported here is `unwrap`.",
+					)
+					.to_compile_error()
+					.into();
+				}
+
+				let mut path = value.value.value();
+
+				let is_exhaustive = if let Some(value) = path.strip_suffix("..") {
+					path = value.to_string();
+					true
+				} else {
+					false
+				};
+
+				let parts = path
+					.split("::")
+					.collect::<Vec<_>>();
+				let path: Path = parts.into();
+
+				let block = Block::new(vec![
+					"value"
+						.unpack(UnpackExpr::new(path, fields, is_exhaustive))
+						.into(),
+					constructor_expr.into(),
+				]);
+
+				match_expr.variant(from_name, vec!["value".into()], block, true, false);
+			}
+		}
+	}
+
+	impl_block.function(
+		"from",
+		FunctionKind::Static,
+		vec![Arg::new("value", name)],
+		Some("Self"),
+		vec![match_expr.into()],
+	);
+
+	impl_block
+		.into_token_stream()
+		.into()
 }
