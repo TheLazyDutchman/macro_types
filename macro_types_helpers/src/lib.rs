@@ -1,6 +1,6 @@
 use macro_types::{
 	attr::{Attr, AttrValue},
-	expr::{self, Block, Expr, ExprValue, MatchVariant, UnpackExpr, Variable},
+	expr::{self, Block, Constructor, Expr, ExprValue, MatchVariant, UnpackExpr, Variable},
 	generic::Generic,
 	item::{self, DeriveInput, Enum, HasGeneric, Item, Struct, Trait},
 	name::{Name, Path},
@@ -591,12 +591,6 @@ pub fn derive_from(input: TokenStream) -> TokenStream {
 	let input: Item<DeriveInput> = input.into();
 	let span = input.span();
 
-	let Ok(input) = input.require_enum() else {
-		return syn::Error::new(span, "Only an enum can be turned into a combinator.")
-			.into_compile_error()
-			.into();
-	};
-
 	let Some(attr) = input
 		.attrs
 		.iter()
@@ -614,7 +608,15 @@ pub fn derive_from(input: TokenStream) -> TokenStream {
 		.into();
 	};
 
-	let name = name.value.value();
+	let mut name = name.value.value();
+
+	let is_exhaustive = if let Some(value) = name.strip_suffix("..") {
+		name = value.to_string();
+		true
+	} else {
+		false
+	};
+
 	let parts = name
 		.split("::")
 		.collect::<Vec<_>>();
@@ -628,15 +630,93 @@ pub fn derive_from(input: TokenStream) -> TokenStream {
 
 	impl_block.for_trait(path);
 
+	let expr = match &**input {
+		DeriveInput::Struct(value) => {
+			derive_from_struct(input.name.clone(), name.clone(), value, is_exhaustive)
+		}
+		DeriveInput::Enum(value) => derive_from_enum(input.name.clone(), name.clone(), value),
+		DeriveInput::Union => {
+			return syn::Error::new(span, "Cannot implement From for a union type.")
+				.into_compile_error()
+				.into()
+		}
+	};
+
+	impl_block.function(
+		"from",
+		FunctionKind::Static,
+		vec![Arg::new("value", name)],
+		Some("Self"),
+		vec![expr],
+	);
+
+	impl_block
+		.into_token_stream()
+		.into()
+}
+
+fn derive_from_struct(name: Name, from: Path, input: &Struct, is_exhaustive: bool) -> Expr {
+	let mut constructor = Constructor::new(name, vec![]);
+	let mut fields = Vec::new();
+
+	for (index, field) in input
+		.fields
+		.iter()
+		.enumerate()
+	{
+		let name = field
+			.name
+			.clone()
+			.unwrap_or_else(|| format!("value{index}").into());
+
+		let mut expr: Expr = name.clone().into();
+		if let Some(attr) = field
+			.attrs
+			.iter()
+			.find(|x| x.name == "from".into())
+		{
+			if let AttrValue::Value(value) = &attr.value {
+				let value = value.value.value();
+				let functions = value.split(",");
+
+				for function in functions {
+					expr = expr
+						.field(function)
+						.call(vec![])
+						.into();
+				}
+			} else {
+				expr = expr
+					.field("into")
+					.call(vec![])
+					.into();
+			}
+		} else {
+			expr = expr
+				.field("into")
+				.call(vec![])
+				.into();
+		}
+
+		constructor.add_field(field.name.clone(), expr);
+		fields.push(name);
+	}
+
+	let unpack = "value".unpack(UnpackExpr::new(from, fields, is_exhaustive));
+
+	Block::new(vec![unpack.into(), constructor.into()]).into()
+}
+
+fn derive_from_enum(name: Name, from: Path, input: &Enum) -> Expr {
 	let mut match_expr = "value".match_expr(vec![]);
 
 	for variant in &input.variants {
-		let mut from_name = name.clone();
+		let mut from_name = from.clone();
 		from_name
 			.segments
 			.push(variant.name.clone());
 
-		let into_name = vec![input.name.clone(), variant.name.clone()];
+		let into_name = vec![name.clone(), variant.name.clone()];
 
 		let mut fields = Vec::new();
 		let mut constructor_expr = variant.constructor();
@@ -757,15 +837,5 @@ pub fn derive_from(input: TokenStream) -> TokenStream {
 		}
 	}
 
-	impl_block.function(
-		"from",
-		FunctionKind::Static,
-		vec![Arg::new("value", name)],
-		Some("Self"),
-		vec![match_expr.into()],
-	);
-
-	impl_block
-		.into_token_stream()
-		.into()
+	match_expr.into()
 }
