@@ -3,14 +3,16 @@
 use macro_types_helpers::From;
 use proc_macro2::{Ident, Span, TokenStream};
 use syn::{
+	spanned::Spanned,
 	token::{
 		As, At, Brace, Colon, Else, Eq, For, If, Not, Question, RArrow, Semi, Star, Underscore,
 	},
-	BinOp, Lit, QSelf, RangeLimits, UnOp,
+	BinOp, Lit, MetaList, QSelf, RangeLimits, UnOp,
 };
 
 use crate::name::{Name, Path};
 
+#[derive(Debug, Clone)]
 pub struct Optional<T>(Option<T>);
 
 /// This is necessary right now because our From macro does not map over an option.
@@ -24,6 +26,7 @@ where
 }
 
 /// This is necessary right now because our From macro does not map over a vector.
+#[derive(Debug, Clone)]
 pub struct List<T>(Vec<T>);
 
 impl<I, U> FromIterator<I> for List<U>
@@ -39,6 +42,7 @@ where
 	}
 }
 
+#[derive(Debug, Clone)]
 pub struct Boxed<T>(Box<T>);
 
 impl<I, U> From<Box<I>> for Boxed<U>
@@ -50,7 +54,7 @@ where
 	}
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::DeriveInput.."]
 pub struct DeriveInput {
 	#[from = "into_iter,collect"]
@@ -60,7 +64,7 @@ pub struct DeriveInput {
 	data: Data,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::Data"]
 pub enum Data {
 	#[from(unwrap = "syn::DataStruct..")]
@@ -74,7 +78,7 @@ pub enum Data {
 	Union { fields: FieldsNamed },
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::Generics.."]
 pub struct Generics {
 	#[from = "into_iter,collect"]
@@ -82,7 +86,7 @@ pub struct Generics {
 	where_clause: Optional<WhereClause>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::GenericParam"]
 pub enum GenericParam {
 	#[from(unwrap = "syn::LifetimeParam..")]
@@ -113,20 +117,20 @@ pub enum GenericParam {
 	},
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::Lifetime.."]
 pub struct Lifetime {
 	ident: Name,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::WhereClause.."]
 pub struct WhereClause {
 	#[from = "into_iter,collect"]
 	predicates: List<WherePredicate>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::Fields"]
 pub enum Fields {
 	Named(FieldsNamed),
@@ -134,21 +138,21 @@ pub enum Fields {
 	Unit,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::FieldsNamed.."]
 pub struct FieldsNamed {
 	#[from = "into_iter,collect"]
 	named: List<Field>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::FieldsUnnamed.."]
 pub struct FieldsUnnamed {
 	#[from = "into_iter,collect"]
 	unnamed: List<Field>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::Field.."]
 pub struct Field {
 	#[from = "into_iter,collect"]
@@ -158,7 +162,7 @@ pub struct Field {
 }
 
 // TODO: Add discriminant
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::Variant.."]
 pub struct Variant {
 	#[from = "into_iter,collect"]
@@ -167,14 +171,32 @@ pub struct Variant {
 	fields: Fields,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::Attribute.."]
 pub struct Attribute {
 	style: AttrStyle,
-	meta: Meta,
+	pub meta: Meta,
 }
 
-#[derive(From)]
+impl Attribute {
+	pub fn path(&self) -> Path {
+		match &self.meta {
+			Meta::Path(path) => path.clone(),
+			Meta::List(value) => value.path.clone().into(),
+			Meta::NameValue { path, .. } => path.clone(),
+		}
+	}
+
+	pub fn span(&self) -> Span {
+		match &self.meta {
+			Meta::Path(value) => value.span(),
+			Meta::List(value) => value.span(),
+			Meta::NameValue { path, value } => path.span(),
+		}
+	}
+}
+
+#[derive(Debug, Clone, From)]
 #[from = "syn::AttrStyle"]
 pub enum AttrStyle {
 	Outer,
@@ -185,18 +207,14 @@ pub enum AttrStyle {
 }
 
 // TODO: This exist because we do not support array types yet in our macros
-#[derive(derive_more::From)]
+#[derive(Debug, Clone, derive_more::From)]
 pub struct Spans([Span; 1]);
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::Meta"]
 pub enum Meta {
 	Path(Path),
-	#[from(unwrap = "syn::MetaList..")]
-	List {
-		path: Path,
-		tokens: TokenStream,
-	},
+	List(MetaList),
 	#[from(unwrap = "syn::MetaNameValue..")]
 	NameValue {
 		path: Path,
@@ -204,6 +222,7 @@ pub enum Meta {
 	},
 }
 
+#[derive(Debug, Clone)]
 pub enum Expr {
 	Array(ExprArray),
 	Assign(ExprAssign),
@@ -246,7 +265,7 @@ pub enum Expr {
 	Yield(ExprYield),
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ExprArray.."]
 pub struct ExprArray {
 	#[from = "into_iter,collect"]
@@ -255,7 +274,7 @@ pub struct ExprArray {
 	elems: List<Expr>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ExprAssign.."]
 pub struct ExprAssign {
 	#[from = "into_iter,collect"]
@@ -264,7 +283,7 @@ pub struct ExprAssign {
 	right: Boxed<Expr>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ExprAsync.."]
 pub struct ExprAsync {
 	#[from = "into_iter,collect"]
@@ -272,7 +291,7 @@ pub struct ExprAsync {
 	block: Block,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ExprAwait.."]
 pub struct ExprAwait {
 	#[from = "into_iter,collect"]
@@ -280,7 +299,7 @@ pub struct ExprAwait {
 	base: Boxed<Expr>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ExprBinary"]
 pub struct ExprBinary {
 	#[from = "into_iter,collect"]
@@ -290,7 +309,7 @@ pub struct ExprBinary {
 	right: Boxed<Expr>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ExprBlock.."]
 pub struct ExprBlock {
 	#[from = "into_iter,collect"]
@@ -298,7 +317,7 @@ pub struct ExprBlock {
 	block: Block,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ExprBreak.."]
 pub struct ExprBreak {
 	#[from = "into_iter,collect"]
@@ -306,7 +325,7 @@ pub struct ExprBreak {
 	expr: Optional<Boxed<Expr>>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ExprCall.."]
 pub struct ExprCall {
 	#[from = "into_iter,collect"]
@@ -316,7 +335,7 @@ pub struct ExprCall {
 	args: List<Expr>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ExprCast.."]
 pub struct ExprCast {
 	#[from = "into_iter,collect"]
@@ -325,7 +344,7 @@ pub struct ExprCast {
 	ty: Boxed<Type>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ExprClosure.."]
 pub struct ExprClosure {
 	#[from = "into_iter,collect"]
@@ -337,7 +356,7 @@ pub struct ExprClosure {
 	body: Boxed<Expr>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ExprConst.."]
 pub struct ExprConst {
 	#[from = "into_iter,collect"]
@@ -345,14 +364,14 @@ pub struct ExprConst {
 	block: Block,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ExprContinue.."]
 pub struct ExprContinue {
 	#[from = "into_iter,collect"]
 	attrs: List<Attribute>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ExprField.."]
 pub struct ExprField {
 	#[from = "into_iter,collect"]
@@ -361,7 +380,7 @@ pub struct ExprField {
 	member: Member,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ExprForLoop.."]
 pub struct ExprForLoop {
 	#[from = "into_iter,collect"]
@@ -371,7 +390,7 @@ pub struct ExprForLoop {
 	body: Block,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ExprGroup.."]
 pub struct ExprGroup {
 	#[from = "into_iter,collect"]
@@ -379,7 +398,7 @@ pub struct ExprGroup {
 	expr: Boxed<Expr>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ExprIf.."]
 pub struct ExprIf {
 	#[from = "into_iter,collect"]
@@ -389,6 +408,7 @@ pub struct ExprIf {
 	else_branch: Optional<ElsePart>,
 }
 
+#[derive(Debug, Clone)]
 pub struct ElsePart(Boxed<Expr>);
 
 impl From<(Else, Box<syn::Expr>)> for ElsePart {
@@ -397,7 +417,7 @@ impl From<(Else, Box<syn::Expr>)> for ElsePart {
 	}
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ExprIndex.."]
 pub struct ExprIndex {
 	#[from = "into_iter,collect"]
@@ -406,14 +426,14 @@ pub struct ExprIndex {
 	index: Boxed<Expr>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ExprInfer.."]
 pub struct ExprInfer {
 	#[from = "into_iter,collect"]
 	attrs: List<Attribute>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ExprLet.."]
 pub struct ExprLet {
 	#[from = "into_iter,collect"]
@@ -422,15 +442,15 @@ pub struct ExprLet {
 	expr: Boxed<Expr>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ExprLit"]
 pub struct ExprLit {
 	#[from = "into_iter,collect"]
 	attrs: List<Attribute>,
-	lit: Lit,
+	pub lit: Lit,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ExprLoop.."]
 pub struct ExprLoop {
 	#[from = "into_iter,collect"]
@@ -438,7 +458,7 @@ pub struct ExprLoop {
 	body: Block,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ExprMacro"]
 pub struct ExprMacro {
 	#[from = "into_iter,collect"]
@@ -446,14 +466,14 @@ pub struct ExprMacro {
 	mac: Macro,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::Macro.."]
 pub struct Macro {
 	path: Path,
 	tokens: TokenStream,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ExprMatch.."]
 pub struct ExprMatch {
 	#[from = "into_iter,collect"]
@@ -463,7 +483,7 @@ pub struct ExprMatch {
 	arms: List<Arm>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::Arm.."]
 pub struct Arm {
 	#[from = "into_iter,collect"]
@@ -473,6 +493,7 @@ pub struct Arm {
 	body: Boxed<Expr>,
 }
 
+#[derive(Debug, Clone)]
 pub struct Guard(Boxed<Expr>);
 
 impl From<(If, Box<syn::Expr>)> for Guard {
@@ -481,7 +502,7 @@ impl From<(If, Box<syn::Expr>)> for Guard {
 	}
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ExprMethodCall.."]
 pub struct ExprMethodCall {
 	#[from = "into_iter,collect"]
@@ -493,13 +514,14 @@ pub struct ExprMethodCall {
 	args: List<Expr>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::AngleBracketedGenericArguments.."]
 pub struct AngleBracketedGenericArguments {
 	#[from = "into_iter,collect"]
 	args: List<GenericArgument>,
 }
 
+#[derive(Debug, Clone)]
 pub enum GenericArgument {
 	Lifetime(Lifetime),
 	Type(Type),
@@ -523,7 +545,7 @@ impl From<syn::GenericArgument> for GenericArgument {
 	}
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::AssocType.."]
 pub struct AssocType {
 	ident: Name,
@@ -531,7 +553,7 @@ pub struct AssocType {
 	ty: Type,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::AssocConst.."]
 pub struct AssocConst {
 	ident: Name,
@@ -539,7 +561,7 @@ pub struct AssocConst {
 	value: Expr,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::Constraint.."]
 pub struct Constraint {
 	ident: Name,
@@ -548,7 +570,7 @@ pub struct Constraint {
 	bounds: List<TypeParamBound>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ExprParen.."]
 pub struct ExprParen {
 	#[from = "into_iter,collect"]
@@ -556,7 +578,7 @@ pub struct ExprParen {
 	expr: Boxed<Expr>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ExprPath"]
 pub struct ExprPath {
 	#[from = "into_iter,collect"]
@@ -565,7 +587,7 @@ pub struct ExprPath {
 	path: Path,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ExprRange"]
 pub struct ExprRange {
 	#[from = "into_iter,collect"]
@@ -575,7 +597,7 @@ pub struct ExprRange {
 	end: Optional<Boxed<Expr>>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ExprReference.."]
 pub struct ExprReference {
 	#[from = "into_iter,collect"]
@@ -583,7 +605,7 @@ pub struct ExprReference {
 	expr: Boxed<Expr>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ExprRepeat.."]
 pub struct ExprRepeat {
 	#[from = "into_iter,collect"]
@@ -592,7 +614,7 @@ pub struct ExprRepeat {
 	len: Boxed<Expr>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ExprReturn.."]
 pub struct ExprReturn {
 	#[from = "into_iter,collect"]
@@ -600,7 +622,7 @@ pub struct ExprReturn {
 	expr: Optional<Boxed<Expr>>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ExprStruct.."]
 pub struct ExprStruct {
 	#[from = "into_iter,collect"]
@@ -611,7 +633,7 @@ pub struct ExprStruct {
 	rest: Optional<Boxed<Expr>>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::FieldValue.."]
 pub struct FieldValue {
 	#[from = "into_iter,collect"]
@@ -620,14 +642,14 @@ pub struct FieldValue {
 	expr: Expr,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::Member"]
 pub enum Member {
 	Named(Name),
 	Unnamed(Index),
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ExprTry.."]
 pub struct ExprTry {
 	#[from = "into_iter,collect"]
@@ -635,7 +657,7 @@ pub struct ExprTry {
 	expr: Boxed<Expr>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ExprTryBlock.."]
 pub struct ExprTryBlock {
 	#[from = "into_iter,collect"]
@@ -643,7 +665,7 @@ pub struct ExprTryBlock {
 	block: Block,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ExprTuple.."]
 pub struct ExprTuple {
 	#[from = "into_iter,collect"]
@@ -652,7 +674,7 @@ pub struct ExprTuple {
 	elems: List<Expr>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ExprWhile.."]
 pub struct ExprWhile {
 	#[from = "into_iter,collect"]
@@ -661,7 +683,7 @@ pub struct ExprWhile {
 	body: Block,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ExprUnsafe.."]
 pub struct ExprUnsafe {
 	#[from = "into_iter,collect"]
@@ -669,7 +691,7 @@ pub struct ExprUnsafe {
 	block: Block,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ExprUnary"]
 pub struct ExprUnary {
 	#[from = "into_iter,collect"]
@@ -678,7 +700,7 @@ pub struct ExprUnary {
 	expr: Boxed<Expr>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ExprYield.."]
 pub struct ExprYield {
 	#[from = "into_iter,collect"]
@@ -733,19 +755,20 @@ impl From<syn::Expr> for Expr {
 	}
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::Block.."]
 pub struct Block {
 	#[from = "into_iter,collect"]
 	stmts: List<Stmt>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::Index.."]
 pub struct Index {
 	index: u32,
 }
 
+#[derive(Debug, Clone)]
 pub enum Pat {
 	Const(PatConst),
 	Ident(PatIdent),
@@ -765,7 +788,7 @@ pub enum Pat {
 	Verbatim(TokenStream),
 	Wild(PatWild),
 }
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::PatConst.."]
 pub struct PatConst {
 	#[from = "into_iter,collect"]
@@ -774,7 +797,7 @@ pub struct PatConst {
 }
 
 // TODO: Add byref and mutability support
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::PatIdent.."]
 pub struct PatIdent {
 	#[from = "into_iter,collect"]
@@ -783,6 +806,7 @@ pub struct PatIdent {
 	subpat: Optional<SubPat>,
 }
 
+#[derive(Debug, Clone)]
 pub struct SubPat(Boxed<Pat>);
 
 impl From<(At, Box<syn::Pat>)> for SubPat {
@@ -791,7 +815,7 @@ impl From<(At, Box<syn::Pat>)> for SubPat {
 	}
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::PatLit"]
 pub struct PatLit {
 	#[from = "into_iter,collect"]
@@ -799,7 +823,7 @@ pub struct PatLit {
 	lit: Lit,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::PatMacro"]
 pub struct PatMacro {
 	#[from = "into_iter,collect"]
@@ -807,7 +831,7 @@ pub struct PatMacro {
 	mac: Macro,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::PatOr.."]
 pub struct PatOr {
 	#[from = "into_iter,collect"]
@@ -816,7 +840,7 @@ pub struct PatOr {
 	cases: List<Pat>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::PatParen.."]
 pub struct PatParen {
 	#[from = "into_iter,collect"]
@@ -824,7 +848,7 @@ pub struct PatParen {
 	pat: Boxed<Pat>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::PatPath"]
 pub struct PatPath {
 	#[from = "into_iter,collect"]
@@ -833,7 +857,7 @@ pub struct PatPath {
 	path: Path,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::PatRange"]
 pub struct PatRange {
 	#[from = "into_iter,collect"]
@@ -843,7 +867,7 @@ pub struct PatRange {
 	end: Optional<Boxed<Expr>>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::PatReference.."]
 pub struct PatReference {
 	#[from = "into_iter,collect"]
@@ -851,14 +875,14 @@ pub struct PatReference {
 	pat: Boxed<Pat>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::PatRest.."]
 pub struct PatRest {
 	#[from = "into_iter,collect"]
 	attrs: List<Attribute>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::PatSlice.."]
 pub struct PatSlice {
 	#[from = "into_iter,collect"]
@@ -867,7 +891,7 @@ pub struct PatSlice {
 	elems: List<Pat>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::PatStruct.."]
 pub struct PatStruct {
 	#[from = "into_iter,collect"]
@@ -879,7 +903,7 @@ pub struct PatStruct {
 	rest: Optional<PatRest>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::FieldPat.."]
 pub struct FieldPat {
 	#[from = "into_iter,collect"]
@@ -888,7 +912,7 @@ pub struct FieldPat {
 	pat: Boxed<Pat>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::PatTuple.."]
 pub struct PatTuple {
 	#[from = "into_iter,collect"]
@@ -897,7 +921,7 @@ pub struct PatTuple {
 	elems: List<Pat>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::PatTupleStruct.."]
 pub struct PatTupleStruct {
 	#[from = "into_iter,collect"]
@@ -908,7 +932,7 @@ pub struct PatTupleStruct {
 	elems: List<Pat>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::PatType.."]
 pub struct PatType {
 	#[from = "into_iter,collect"]
@@ -917,7 +941,7 @@ pub struct PatType {
 	ty: Boxed<Type>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::PatWild.."]
 pub struct PatWild {
 	#[from = "into_iter,collect"]
@@ -949,21 +973,21 @@ impl From<syn::Pat> for Pat {
 	}
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ReturnType"]
 pub enum ReturnType {
 	Default,
 	Type(RArrow, Boxed<Type>),
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::BoundLifetimes.."]
 pub struct BoundLifetimes {
 	#[from = "into_iter,collect"]
 	lifetimes: List<GenericParam>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::Stmt"]
 pub enum Stmt {
 	#[from(unwrap = "syn::Local..")]
@@ -983,13 +1007,14 @@ pub enum Stmt {
 	},
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::LocalInit.."]
 pub struct LocalInit {
 	expr: Boxed<Expr>,
 	diverge: Optional<Diverge>,
 }
 
+#[derive(Debug, Clone)]
 pub struct Diverge(Boxed<Expr>);
 
 impl From<(Else, Box<syn::Expr>)> for Diverge {
@@ -998,6 +1023,7 @@ impl From<(Else, Box<syn::Expr>)> for Diverge {
 	}
 }
 
+#[derive(Debug, Clone)]
 pub enum Item {
 	Const(ItemConst),
 	Enum(ItemEnum),
@@ -1017,7 +1043,7 @@ pub enum Item {
 	Verbatim(TokenStream),
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ItemConst.."]
 pub struct ItemConst {
 	#[from = "into_iter,collect"]
@@ -1028,7 +1054,7 @@ pub struct ItemConst {
 	expr: Boxed<Expr>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ItemEnum.."]
 pub struct ItemEnum {
 	#[from = "into_iter,collect"]
@@ -1039,7 +1065,7 @@ pub struct ItemEnum {
 	variants: List<Variant>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ItemExternCrate.."]
 pub struct ItemExternCrate {
 	#[from = "into_iter,collect"]
@@ -1048,6 +1074,7 @@ pub struct ItemExternCrate {
 	rename: Optional<AsName>,
 }
 
+#[derive(Debug, Clone)]
 pub struct AsName(Name);
 
 impl From<(As, Ident)> for AsName {
@@ -1056,7 +1083,7 @@ impl From<(As, Ident)> for AsName {
 	}
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ItemFn.."]
 pub struct ItemFn {
 	#[from = "into_iter,collect"]
@@ -1065,7 +1092,7 @@ pub struct ItemFn {
 	block: Boxed<Block>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ItemForeignMod.."]
 pub struct ItemForeignMod {
 	#[from = "into_iter,collect"]
@@ -1074,6 +1101,7 @@ pub struct ItemForeignMod {
 	items: List<ForeignItem>,
 }
 
+#[derive(Debug, Clone)]
 pub enum ForeignItem {
 	Fn(ForeignItemFn),
 	Static(ForeignItemStatic),
@@ -1082,7 +1110,7 @@ pub enum ForeignItem {
 	Verbatim(TokenStream),
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ForeignItemFn.."]
 pub struct ForeignItemFn {
 	#[from = "into_iter,collect"]
@@ -1090,7 +1118,7 @@ pub struct ForeignItemFn {
 	sig: Signature,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ForeignItemStatic.."]
 pub struct ForeignItemStatic {
 	#[from = "into_iter,collect"]
@@ -1099,7 +1127,7 @@ pub struct ForeignItemStatic {
 	ty: Boxed<Type>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ForeignItemType.."]
 pub struct ForeignItemType {
 	#[from = "into_iter,collect"]
@@ -1108,7 +1136,7 @@ pub struct ForeignItemType {
 	generics: Generics,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ForeignItemMacro.."]
 pub struct ForeignItemMacro {
 	#[from = "into_iter,collect"]
@@ -1129,7 +1157,7 @@ impl From<syn::ForeignItem> for ForeignItem {
 	}
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ItemImpl.."]
 pub struct ItemImpl {
 	#[from = "into_iter,collect"]
@@ -1141,6 +1169,7 @@ pub struct ItemImpl {
 	items: List<ImplItem>,
 }
 
+#[derive(Debug, Clone)]
 pub enum ImplItem {
 	Const(ImplItemConst),
 	Fn(ImplItemFn),
@@ -1148,7 +1177,8 @@ pub enum ImplItem {
 	Macro(ImplItemMacro),
 	Verbatim(TokenStream),
 }
-#[derive(From)]
+
+#[derive(Debug, Clone, From)]
 #[from = "syn::ImplItemConst.."]
 pub struct ImplItemConst {
 	#[from = "into_iter,collect"]
@@ -1159,7 +1189,7 @@ pub struct ImplItemConst {
 	expr: Expr,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ImplItemFn.."]
 pub struct ImplItemFn {
 	#[from = "into_iter,collect"]
@@ -1168,7 +1198,7 @@ pub struct ImplItemFn {
 	block: Block,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ImplItemType.."]
 pub struct ImplItemType {
 	#[from = "into_iter,collect"]
@@ -1178,7 +1208,7 @@ pub struct ImplItemType {
 	ty: Type,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ImplItemMacro.."]
 pub struct ImplItemMacro {
 	#[from = "into_iter,collect"]
@@ -1199,6 +1229,7 @@ impl From<syn::ImplItem> for ImplItem {
 	}
 }
 
+#[derive(Debug, Clone)]
 pub struct ForTrait(Option<Not>, Path);
 
 impl From<(Option<Not>, syn::Path, For)> for ForTrait {
@@ -1207,7 +1238,7 @@ impl From<(Option<Not>, syn::Path, For)> for ForTrait {
 	}
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ItemMacro.."]
 pub struct ItemMacro {
 	#[from = "into_iter,collect"]
@@ -1216,7 +1247,7 @@ pub struct ItemMacro {
 	mac: Macro,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ItemMod.."]
 pub struct ItemMod {
 	#[from = "into_iter,collect"]
@@ -1225,6 +1256,7 @@ pub struct ItemMod {
 	content: Optional<ModItems>,
 }
 
+#[derive(Debug, Clone)]
 pub struct ModItems(List<Item>);
 
 impl From<(Brace, Vec<syn::Item>)> for ModItems {
@@ -1233,7 +1265,7 @@ impl From<(Brace, Vec<syn::Item>)> for ModItems {
 	}
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ItemStatic.."]
 pub struct ItemStatic {
 	#[from = "into_iter,collect"]
@@ -1243,7 +1275,7 @@ pub struct ItemStatic {
 	expr: Boxed<Expr>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ItemStruct.."]
 pub struct ItemStruct {
 	#[from = "into_iter,collect"]
@@ -1253,7 +1285,7 @@ pub struct ItemStruct {
 	fields: Fields,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ItemTrait.."]
 pub struct ItemTrait {
 	#[from = "into_iter,collect"]
@@ -1266,6 +1298,7 @@ pub struct ItemTrait {
 	items: List<TraitItem>,
 }
 
+#[derive(Debug, Clone)]
 pub enum TraitItem {
 	Const(TraitItemConst),
 	Fn(TraitItemFn),
@@ -1274,7 +1307,7 @@ pub enum TraitItem {
 	Verbatim(TokenStream),
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::TraitItemConst.."]
 pub struct TraitItemConst {
 	#[from = "into_iter,collect"]
@@ -1285,6 +1318,7 @@ pub struct TraitItemConst {
 	default: Optional<DefaultExpr>,
 }
 
+#[derive(Debug, Clone)]
 pub struct DefaultExpr(Expr);
 
 impl From<(Eq, syn::Expr)> for DefaultExpr {
@@ -1293,7 +1327,7 @@ impl From<(Eq, syn::Expr)> for DefaultExpr {
 	}
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::TraitItemFn.."]
 pub struct TraitItemFn {
 	#[from = "into_iter,collect"]
@@ -1302,7 +1336,7 @@ pub struct TraitItemFn {
 	default: Optional<Block>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::TraitItemType.."]
 pub struct TraitItemType {
 	#[from = "into_iter,collect"]
@@ -1314,6 +1348,7 @@ pub struct TraitItemType {
 	default: Optional<DefaultType>,
 }
 
+#[derive(Debug, Clone)]
 pub struct DefaultType(Type);
 
 impl From<(Eq, syn::Type)> for DefaultType {
@@ -1322,7 +1357,7 @@ impl From<(Eq, syn::Type)> for DefaultType {
 	}
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::TraitItemMacro.."]
 pub struct TraitItemMacro {
 	#[from = "into_iter,collect"]
@@ -1343,7 +1378,7 @@ impl From<syn::TraitItem> for TraitItem {
 	}
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ItemTraitAlias.."]
 pub struct ItemTraitAlias {
 	#[from = "into_iter,collect"]
@@ -1354,7 +1389,7 @@ pub struct ItemTraitAlias {
 	bounds: List<TypeParamBound>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ItemType.."]
 pub struct ItemType {
 	#[from = "into_iter,collect"]
@@ -1364,7 +1399,7 @@ pub struct ItemType {
 	ty: Boxed<Type>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ItemUnion.."]
 pub struct ItemUnion {
 	#[from = "into_iter,collect"]
@@ -1374,7 +1409,7 @@ pub struct ItemUnion {
 	fields: FieldsNamed,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::ItemUse.."]
 pub struct ItemUse {
 	#[from = "into_iter,collect"]
@@ -1382,7 +1417,7 @@ pub struct ItemUse {
 	tree: UseTree,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::UseTree"]
 pub enum UseTree {
 	#[from(unwrap = "syn::UsePath..")]
@@ -1424,13 +1459,14 @@ impl From<syn::Item> for Item {
 	}
 }
 
+#[derive(Debug, Clone)]
 pub enum TypeParamBound {
 	Trait(TraitBound),
 	Lifetime(Lifetime),
 	Verbatim(TokenStream),
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::TraitBound.."]
 pub struct TraitBound {
 	modifier: TraitBoundModifier,
@@ -1438,7 +1474,7 @@ pub struct TraitBound {
 	path: Path,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::TraitBoundModifier"]
 pub enum TraitBoundModifier {
 	None,
@@ -1456,12 +1492,13 @@ impl From<syn::TypeParamBound> for TypeParamBound {
 	}
 }
 
+#[derive(Debug, Clone)]
 pub enum WherePredicate {
 	Lifetime(PredicateLifetime),
 	Type(PredicateType),
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::PredicateLifetime.."]
 pub struct PredicateLifetime {
 	lifetime: Lifetime,
@@ -1469,7 +1506,7 @@ pub struct PredicateLifetime {
 	bounds: List<Lifetime>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::PredicateType.."]
 pub struct PredicateType {
 	lifetimes: Optional<BoundLifetimes>,
@@ -1490,6 +1527,7 @@ impl From<syn::WherePredicate> for WherePredicate {
 	}
 }
 
+#[derive(Debug, Clone)]
 pub enum Type {
 	Array(TypeArray),
 	BareFn(TypeBareFn),
@@ -1508,14 +1546,14 @@ pub enum Type {
 	Verbatim(TokenStream),
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::TypeArray.."]
 pub struct TypeArray {
 	elem: Boxed<Type>,
 	len: Expr,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::TypeBareFn.."]
 pub struct TypeBareFn {
 	#[from = "into_iter,collect"]
@@ -1523,7 +1561,7 @@ pub struct TypeBareFn {
 	output: ReturnType,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::BareFnArg"]
 pub struct BareFnArg {
 	#[from = "into_iter,collect"]
@@ -1532,6 +1570,7 @@ pub struct BareFnArg {
 	ty: Type,
 }
 
+#[derive(Debug, Clone)]
 pub struct BareFnArgName(Name);
 
 impl From<(Ident, Colon)> for BareFnArgName {
@@ -1540,77 +1579,77 @@ impl From<(Ident, Colon)> for BareFnArgName {
 	}
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::TypeGroup.."]
 pub struct TypeGroup {
 	elem: Boxed<Type>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::TypeImplTrait.."]
 pub struct TypeImplTrait {
 	#[from = "into_iter,collect"]
 	bounds: List<TypeParamBound>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::TypeInfer"]
 pub struct TypeInfer {
 	underscore_token: Underscore,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::TypeMacro"]
 pub struct TypeMacro {
 	mac: Macro,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::TypeNever"]
 pub struct TypeNever {
 	// TODO: Find a way to use the from derive macro to produce unit structs
 	bang_token: Not,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::TypeParen.."]
 pub struct TypeParen {
 	elem: Boxed<Type>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::TypePath"]
 pub struct TypePath {
 	qself: Optional<QSelf>,
 	path: Path,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::TypePtr.."]
 pub struct TypePtr {
 	elem: Boxed<Type>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::TypeReference.."]
 pub struct TypeReference {
 	elem: Boxed<Type>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::TypeSlice.."]
 pub struct TypeSlice {
 	elem: Boxed<Type>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::TypeTraitObject.."]
 pub struct TypeTraitObject {
 	#[from = "into_iter,collect"]
 	bounds: List<TypeParamBound>,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::TypeTuple.."]
 pub struct TypeTuple {
 	#[from = "into_iter,collect"]
@@ -1640,7 +1679,7 @@ impl From<syn::Type> for Type {
 	}
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::Signature.."]
 pub struct Signature {
 	ident: Name,
@@ -1651,7 +1690,7 @@ pub struct Signature {
 	output: ReturnType,
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::Variadic.."]
 pub struct Variadic {
 	#[from = "into_iter,collect"]
@@ -1659,6 +1698,7 @@ pub struct Variadic {
 	pat: Optional<VariadicPat>,
 }
 
+#[derive(Debug, Clone)]
 pub struct VariadicPat(Boxed<Pat>);
 
 impl From<(Box<syn::Pat>, Colon)> for VariadicPat {
@@ -1667,7 +1707,7 @@ impl From<(Box<syn::Pat>, Colon)> for VariadicPat {
 	}
 }
 
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::FnArg"]
 pub enum FnArg {
 	Receiver(Receiver),
@@ -1675,7 +1715,7 @@ pub enum FnArg {
 }
 
 // TODO: Add support for mutability
-#[derive(From)]
+#[derive(Debug, Clone, From)]
 #[from = "syn::Receiver.."]
 pub struct Receiver {
 	#[from = "into_iter,collect"]

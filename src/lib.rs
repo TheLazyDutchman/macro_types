@@ -1,4 +1,4 @@
-use attr::Attr;
+use ast::Attribute;
 use expr::{Block, Constructor};
 use generic::Generic;
 use item::HasGeneric;
@@ -9,7 +9,6 @@ use syn::Data;
 use tyref::TyRef;
 
 pub mod ast;
-pub mod attr;
 pub mod expr;
 pub mod generic;
 pub mod item;
@@ -157,7 +156,7 @@ macro_rules! enum_definitions {
 #[derive(Debug, Clone)]
 pub struct Struct {
 	pub name: Name,
-	pub attrs: Vec<Attr>,
+	pub attrs: Vec<Attribute>,
 	pub generics: Vec<Generic>,
 	pub fields: Vec<Field>,
 }
@@ -178,7 +177,7 @@ impl Struct {
 		path.into()
 	}
 
-	pub fn attr(&mut self, attr: impl Into<Attr>) {
+	pub fn attr(&mut self, attr: impl Into<Attribute>) {
 		self.attrs.push(attr.into());
 	}
 
@@ -300,11 +299,15 @@ impl From<syn::Variant> for Struct {
 pub struct Field {
 	pub name: Option<Name>,
 	pub ty: TyRef,
-	pub attrs: Vec<Attr>,
+	pub attrs: Vec<Attribute>,
 }
 
 impl Field {
-	pub fn new(name: Option<impl Into<Name>>, ty: impl Into<TyRef>, attrs: Vec<Attr>) -> Field {
+	pub fn new(
+		name: Option<impl Into<Name>>,
+		ty: impl Into<TyRef>,
+		attrs: Vec<Attribute>,
+	) -> Field {
 		Self {
 			name: name.map(|x| x.into()),
 			ty: ty.into(),
@@ -331,7 +334,7 @@ impl From<syn::Field> for Field {
 			value
 				.attrs
 				.into_iter()
-				.map(Attr::from)
+				.map(Attribute::from)
 				.collect(),
 		)
 	}
@@ -351,7 +354,7 @@ impl HasGeneric for Field {
 #[derive(Debug, Clone)]
 pub struct Enum {
 	pub name: Name,
-	pub attrs: Vec<Attr>,
+	pub attrs: Vec<Attribute>,
 	pub generics: Vec<Generic>,
 	// TODO: Deal with variants other than named variants
 	pub variants: Vec<Struct>,
@@ -373,7 +376,7 @@ impl Enum {
 		path.into()
 	}
 
-	pub fn attr(&mut self, attr: impl Into<Attr>) {
+	pub fn attr(&mut self, attr: impl Into<Attribute>) {
 		self.attrs.push(attr.into());
 	}
 

@@ -1,5 +1,5 @@
 use macro_types::{
-	attr::{Attr, AttrValue},
+	ast::{self, Attribute, Meta},
 	expr::{self, Block, Constructor, Expr, ExprValue, MatchVariant, UnpackExpr, Variable},
 	generic::Generic,
 	item::{self, DeriveInput, Enum, HasGeneric, Item, Struct, Trait},
@@ -9,7 +9,7 @@ use macro_types::{
 };
 use proc_macro::TokenStream;
 use quote::ToTokens;
-use syn::parse_macro_input;
+use syn::{parse_macro_input, Lit, LitStr};
 
 /// Derives [`From`] and [`TryInto`] for all unit
 /// variants
@@ -298,7 +298,7 @@ pub fn derive_to_tokens(input: TokenStream) -> TokenStream {
 	quote::quote!(#impl_block).into()
 }
 
-fn derive_to_tokens_struct(impl_block: &mut ImplBlock, attrs: &[Attr], value: &Struct) {
+fn derive_to_tokens_struct(impl_block: &mut ImplBlock, attrs: &[Attribute], value: &Struct) {
 	let mut exprs: Vec<Expr> = Vec::new();
 
 	let mut field_names = Vec::new();
@@ -411,18 +411,25 @@ fn derive_to_tokens_enum(impl_block: &mut ImplBlock, name: Name, value: &Enum) {
 
 fn fields_to_tokens_expr(
 	names: &[impl Into<Expr> + Clone],
-	attrs: &[Attr],
+	attrs: &[Attribute],
 	is_tuple: bool,
 ) -> Result<Expr, &'static str> {
 	let expr: Expr = if let Some(attr) = attrs
 		.iter()
-		.find(|x| x.name == "to_tokens".into())
+		.find(|x| x.path() == "to_tokens".into())
 	{
-		if let AttrValue::Value(value) = &attr.value {
-			let mut value = value.value.value();
+		if let Meta::NameValue { value, .. } = &attr.meta {
+			let ast::Expr::Lit(value) = value else {
+				panic!("We currently only support string literals in attributes");
+			};
+
+			let Lit::Str(value) = &value.lit else {
+				panic!("We currently only support string literals in attributes");
+			};
+
+			let mut value = value.value();
 
 			if is_tuple {
-				eprintln!("{value}");
 				let mut new_value = String::new();
 				if value.starts_with('#') {
 					new_value.push('#');
@@ -437,14 +444,11 @@ fn fields_to_tokens_expr(
 					if let Some(part) = part.chars().next() {
 						if part.is_numeric() {
 							new_value += "#value";
-							// } else {
-							// 	new_value += "#";
 						}
 					}
 
 					new_value += part;
 				}
-				eprintln!("{new_value}");
 
 				value = new_value;
 			}
@@ -594,12 +598,12 @@ pub fn derive_from(input: TokenStream) -> TokenStream {
 	let Some(attr) = input
 		.attrs
 		.iter()
-		.find(|x| x.name == "from".into())
+		.find(|x| x.path() == "from".into())
 	else {
 		return syn::Error::new(span, "From derive macro requires an attribute to determine what type to convert from, like: `#[from(...names)]`").into_compile_error().into();
 	};
 
-	let AttrValue::Value(name) = &attr.value else {
+	let Meta::NameValue { value, .. } = &attr.meta else {
 		return syn::Error::new(
 			attr.span(),
 			r#"The from attr needs to be of the form `#[from = "{name}"]`, where name is the name from which this enum can be converted."#
@@ -608,7 +612,25 @@ pub fn derive_from(input: TokenStream) -> TokenStream {
 		.into();
 	};
 
-	let mut name = name.value.value();
+	let ast::Expr::Lit(value) = value else {
+		return syn::Error::new(
+			attr.span(),
+			r#"The from attr needs to be of the form `#[from = "{name}"]`, where name is the name from which this enum can be converted."#
+		)
+		.into_compile_error()
+		.into();
+	};
+
+	let Lit::Str(value) = &value.lit else {
+		return syn::Error::new(
+			attr.span(),
+			r#"The from attr needs to be of the form `#[from = "{name}"]`, where name is the name from which this enum can be converted."#
+		)
+		.into_compile_error()
+		.into();
+	};
+
+	let mut name = value.value();
 
 	let is_exhaustive = if let Some(value) = name.strip_suffix("..") {
 		name = value.to_string();
@@ -673,10 +695,17 @@ fn derive_from_struct(name: Name, from: Path, input: &Struct, is_exhaustive: boo
 		if let Some(attr) = field
 			.attrs
 			.iter()
-			.find(|x| x.name == "from".into())
+			.find(|x| x.path() == "from".into())
 		{
-			if let AttrValue::Value(value) = &attr.value {
-				let value = value.value.value();
+			if let Meta::NameValue { value, .. } = &attr.meta {
+				let ast::Expr::Lit(value) = value else {
+					panic!("Currently only string literals are supported here");
+				};
+				let Lit::Str(value) = &value.lit else {
+					panic!("Currently only string literals are supported here");
+				};
+
+				let value = value.value();
 				let functions = value.split(",");
 
 				for function in functions {
@@ -736,10 +765,17 @@ fn derive_from_enum(name: Name, from: Path, input: &Enum) -> Expr {
 			if let Some(attr) = field
 				.attrs
 				.iter()
-				.find(|x| x.name == "from".into())
+				.find(|x| x.path() == "from".into())
 			{
-				if let AttrValue::Value(value) = &attr.value {
-					let value = value.value.value();
+				if let Meta::NameValue { value, .. } = &attr.meta {
+					let ast::Expr::Lit(value) = value else {
+						panic!("Currently only string literals aare supported here");
+					};
+					let Lit::Str(value) = &value.lit else {
+						panic!("Currently only string literals aare supported here");
+					};
+
+					let value = value.value();
 					let functions = value.split(",");
 
 					for function in functions {
@@ -769,7 +805,7 @@ fn derive_from_enum(name: Name, from: Path, input: &Enum) -> Expr {
 		match variant
 			.attrs
 			.iter()
-			.find(|x| x.name == "from".into())
+			.find(|x| x.path() == "from".into())
 		{
 			None => {
 				match_expr.variant(
@@ -784,7 +820,7 @@ fn derive_from_enum(name: Name, from: Path, input: &Enum) -> Expr {
 				);
 			}
 			Some(attr) => {
-				let AttrValue::List(values) = &attr.value else {
+				let Meta::List(list) = &attr.meta else {
 					return syn::Error::new(
 						attr.span(),
 						"from attribute has to be a list of values",
@@ -793,25 +829,28 @@ fn derive_from_enum(name: Name, from: Path, input: &Enum) -> Expr {
 					.into();
 				};
 
-				let Some(value) = values.values.first() else {
-					return syn::Error::new(
-						attr.span(),
-						"attribute has to have at least a single value",
-					)
-					.to_compile_error()
-					.into();
-				};
-
-				if value.name != "unwrap".into() {
-					return syn::Error::new(
-						attr.span(),
-						"Currently, the only option supported here is `unwrap`.",
-					)
-					.to_compile_error()
-					.into();
+				let mut value: Option<LitStr> = None;
+				if let Err(err) = list.parse_nested_meta(|meta| {
+					if !meta.path.is_ident("unwrap") {
+						return Err(syn::Error::new(
+							attr.span(),
+							"We currently only support the `unwrap` option.",
+						));
+					}
+					let _: syn::token::Eq = meta.input.parse()?;
+					value = Some(meta.input.parse()?);
+					Ok(())
+				}) {
+					return err
+						.into_compile_error()
+						.into();
 				}
 
-				let mut path = value.value.value();
+				let Some(mut path) = value.map(|x| x.value()) else {
+					return syn::Error::new(attr.span(), "Expected a name value pair")
+						.into_compile_error()
+						.into();
+				};
 
 				let is_exhaustive = if let Some(value) = path.strip_suffix("..") {
 					path = value.to_string();

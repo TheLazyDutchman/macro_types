@@ -5,7 +5,7 @@ use quote::ToTokens;
 use syn::AssocType;
 
 use crate::{
-	attr::Attr,
+	ast::Attribute,
 	expr::{Block, Constructor},
 	generic::Generic,
 	name::{Name, Path},
@@ -98,7 +98,7 @@ impl Item<DeriveInput> {
 
 #[derive(Deref, DerefMut)]
 pub struct NamedItem<T> {
-	pub attrs: Vec<Attr>,
+	pub attrs: Vec<Attribute>,
 	pub name: Name,
 
 	#[deref]
@@ -123,7 +123,7 @@ impl<T> NamedItem<T> {
 		self.name.clone().into()
 	}
 
-	pub fn attr(&mut self, attr: impl Into<Attr>) -> &mut Self {
+	pub fn attr(&mut self, attr: impl Into<Attribute>) -> &mut Self {
 		self.attrs.push(attr.into());
 		self
 	}
