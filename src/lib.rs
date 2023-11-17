@@ -8,6 +8,7 @@ use quote::{quote, ToTokens};
 use syn::Data;
 use tyref::TyRef;
 
+pub mod ast;
 pub mod attr;
 pub mod expr;
 pub mod generic;
